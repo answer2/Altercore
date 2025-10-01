@@ -1,0 +1,16 @@
+-- Merging decision tree log ---
+manifest
+ADDED from D:\project\AndroidProject\nativecall\hiddenapi-stub\build\intermediates\tmp\ProcessLibraryManifest\debug\tempAndroidManifest11187228915131378811.xml:2:13-83
+INJECTED from D:\project\AndroidProject\nativecall\hiddenapi-stub\build\intermediates\tmp\ProcessLibraryManifest\debug\tempAndroidManifest11187228915131378811.xml:2:13-83
+	package
+		INJECTED from D:\project\AndroidProject\nativecall\hiddenapi-stub\build\intermediates\tmp\ProcessLibraryManifest\debug\tempAndroidManifest11187228915131378811.xml
+	xmlns:android
+		ADDED from D:\project\AndroidProject\nativecall\hiddenapi-stub\build\intermediates\tmp\ProcessLibraryManifest\debug\tempAndroidManifest11187228915131378811.xml:2:23-81
+uses-sdk
+INJECTED from D:\project\AndroidProject\nativecall\hiddenapi-stub\build\intermediates\tmp\ProcessLibraryManifest\debug\tempAndroidManifest11187228915131378811.xml reason: use-sdk injection requested
+INJECTED from D:\project\AndroidProject\nativecall\hiddenapi-stub\build\intermediates\tmp\ProcessLibraryManifest\debug\tempAndroidManifest11187228915131378811.xml
+INJECTED from D:\project\AndroidProject\nativecall\hiddenapi-stub\build\intermediates\tmp\ProcessLibraryManifest\debug\tempAndroidManifest11187228915131378811.xml
+	android:targetSdkVersion
+		INJECTED from D:\project\AndroidProject\nativecall\hiddenapi-stub\build\intermediates\tmp\ProcessLibraryManifest\debug\tempAndroidManifest11187228915131378811.xml
+	android:minSdkVersion
+		INJECTED from D:\project\AndroidProject\nativecall\hiddenapi-stub\build\intermediates\tmp\ProcessLibraryManifest\debug\tempAndroidManifest11187228915131378811.xml
