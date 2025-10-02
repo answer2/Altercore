@@ -8,6 +8,7 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import dev.answer.altercore.NativeImpl;
 import dev.answer.altercore.core.Altercore;
 
 import java.lang.reflect.Field;
@@ -47,7 +48,7 @@ public class MainActivity extends AppCompatActivity {
 //            e.printStackTrace();
 //        }
         try {
-            System.out.println(Arrays.toString( Altercore.exchangeType("aaaa")));
+            System.out.println(Arrays.toString( NativeImpl.exchangeType("aaaa")));
 
         } catch (Exception e) {
             e.printStackTrace();

@@ -6,6 +6,9 @@ android {
     namespace = "dev.answer.altercore"
     compileSdk = 35
 
+    defaultConfig {
+        minSdk = 21
+    }
 
     buildTypes {
         release {

@@ -1,10 +1,28 @@
+/*
+ * Copyright (C) 2025 AnswerDev. All rights reserved.
+ *
+ * Licensed under the GNU General Public License, Version 3.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.gnu.org/licenses/gpl-3.0.html
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Created by AnswerDev
+ */
 package dev.answer.altercore.core;
 
 import android.os.Build;
+
 import java.util.HashMap;
 import java.util.Map;
 
-public class SymbolResolver {
+public class SymbolStorage {
 
     private static final Map<Integer, Map<String, SymbolPair>> sdkSymbolMap = new HashMap<>();
     private static final Map<String, SymbolPair> defaultSymbols = new HashMap<>();
@@ -23,10 +41,10 @@ public class SymbolResolver {
                 "jit_load"));
 
         // Android 11
-        registerSymbol(30,"jit_compile_method",
+        registerSymbol(30, "jit_compile_method",
                 "_ZN3art3jit11JitCompiler13CompileMethodEPNS_6ThreadEPNS0_15JitMemoryRegionEPNS_9ArtMethodEbb");
 
-        registerSymbol(30,"addWeakGloablReference",
+        registerSymbol(30, "addWeakGloablReference",
                 "_ZN3art9JavaVMExt16AddWeakGlobalRefEPNS_6ThreadENS_6ObjPtrINS_6mirror6ObjectEEE");
 
         registerSymbol(30, "FromReflectedMethod",
@@ -34,14 +52,11 @@ public class SymbolResolver {
 
         // Android 13
         registerSymbol(33, "NewLocalRef", "_ZN3art3JNI11NewLocalRefEP7_JNIEnvP8_jobject");
-        registerSymbol(33,"DeleteWeakGlobalRef", "_ZN3art3JNI19DeleteWeakGlobalRefEP7_JNIEnvP8_jobject");
+        registerSymbol(33, "DeleteWeakGlobalRef", "_ZN3art3JNI19DeleteWeakGlobalRefEP7_JNIEnvP8_jobject");
 
 
     }
 
-    /**
-     * 符号对，包含32位和64位的符号名称
-     */
     private static class SymbolPair {
         final String symbol32;
         final String symbol64;
@@ -66,7 +81,6 @@ public class SymbolResolver {
     public static String getSymbol(String functionName, boolean is64Bit) {
         int sdk = Build.VERSION.SDK_INT;
 
-        // 遍历匹配最接近的版本（从高到低）
         for (int ver = sdk; ver >= 21; ver--) {
             Map<String, SymbolPair> map = sdkSymbolMap.get(ver);
             if (map != null && map.containsKey(functionName)) {
@@ -74,7 +88,7 @@ public class SymbolResolver {
             }
         }
 
-        // fallback 默认
+
         SymbolPair pair = defaultSymbols.get(functionName);
         return pair != null ? pair.getSymbol(is64Bit) : null;
     }
@@ -117,16 +131,10 @@ public class SymbolResolver {
         }
     }
 
-    /**
-     * 便捷方法：注册相同符号名（32位和64位相同的情况）
-     */
     public static void registerSymbol(int sdkVersion, String functionName, String symbol) {
         registerSymbol(sdkVersion, functionName, symbol, symbol);
     }
 
-    /**
-     * 便捷方法：注册相同符号名（32位和64位相同的情况）
-     */
     public static void registerSymbol(int minSdkVersion, int maxSdkVersion, String functionName, String symbol) {
         registerSymbol(minSdkVersion, maxSdkVersion, functionName, symbol, symbol);
     }

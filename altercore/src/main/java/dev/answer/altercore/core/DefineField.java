@@ -15,13 +15,16 @@
  *
  * Created by AnswerDev
  */
-package dev.answer.altercore;
 
-public class AlterConfig {
-    /**
-     * Whether we need to print more detailed logs.
-     */
-    public static boolean debug = true;
+package dev.answer.altercore.core;
 
-    public static boolean supportUnsafe = true;
+public class DefineField {
+    public static final long TRUE = 1;
+    public static final long FALSE = 0;
+    public static final int JNI_OK = 0;
+    public static final int JNI_ERR = -1;
+    public static final int JNI_VERSION_1_2 = 0x00010002;
+    public static final int JNI_VERSION_1_4 = 0x00010004;
+    public static final int JNI_VERSION_1_6 = 0x00010006;
+    private static final int SHELLCODE_SIZE = 0x200;
 }
