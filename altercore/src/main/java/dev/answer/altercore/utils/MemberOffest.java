@@ -23,15 +23,19 @@ import static dev.answer.altercore.utils.UnsafeWrapper.getUnsafe;
 import dev.answer.altercore.NativeImpl;
 import dev.answer.altercore.core.NativeObject;
 
-public class Member extends NativeObject {
-    private int mOffest;
-    public Member(int offest) {
+public class MemberOffest extends NativeObject {
+    private long mOffest;
+
+    public MemberOffest() {
+        super(0);
+    }
+    public MemberOffest(long offest) {
         super(0);
         this.mOffest = offest;
     }
 
     long getAs(long instance) {
-        if (!IsValid()) {
+        if (!isValid()) {
             return 0;
         }
         return ( instance + mOffest);
@@ -46,7 +50,7 @@ public class Member extends NativeObject {
     }
 
     public void setAs(long instance, long value) {
-        if (!IsValid()) {
+        if (!isValid()) {
             return;
         }
         NativeImpl.memcpy(instance + mOffest, value, getUnsafe().addressSize());
@@ -63,15 +67,15 @@ public class Member extends NativeObject {
         setAs(instance, value);
     }
 
-    public void setOffset(int offset) {
+    public void setOffset(long offset) {
         this.mOffest = offset;
     }
 
-    public int getOffset() {
+    public long getOffset() {
         return this.mOffest;
     }
 
-    public boolean IsValid() {
+    public boolean isValid() {
         return this.mOffest >= 0;
     }
 }

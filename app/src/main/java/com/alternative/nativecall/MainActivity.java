@@ -48,6 +48,8 @@ public class MainActivity extends AppCompatActivity {
 //            e.printStackTrace();
 //        }
         try {
+
+          Altercore.init();
             System.out.println(Arrays.toString( NativeImpl.exchangeType("aaaa")));
 
         } catch (Exception e) {

@@ -21,6 +21,9 @@ package dev.answer.altercore.core;
 public class DefineField {
     public static final long TRUE = 1;
     public static final long FALSE = 0;
+
+    public static final NativeObject TRUE_OBJECT = new NativeObject(1);
+    public static final NativeObject FALSE_OBJECT = new NativeObject(0);
     public static final int JNI_OK = 0;
     public static final int JNI_ERR = -1;
     public static final int JNI_VERSION_1_2 = 0x00010002;

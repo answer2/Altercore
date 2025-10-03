@@ -25,7 +25,7 @@ import android.os.Build;
 
 import dev.answer.altercore.NativeImpl;
 import dev.answer.altercore.utils.AlterLog;
-import dev.answer.altercore.utils.Member;
+import dev.answer.altercore.utils.MemberOffest;
 import dev.tmpfs.libcoresyscall.elfloader.SymbolResolver;
 
 public class JitHelper {
@@ -34,7 +34,7 @@ public class JitHelper {
     private static NativeObject jit_update_options_ptr;
     private static NativeObject self_compiler;
     private static NativeObject jit_compile_method;
-    private static Member CompilerOptions_inline_max_code_units;
+    private static MemberOffest CompilerOptions_inline_max_code_units;
     private static NativeObject jit_compile_method_q;
 
     public static void init(SymbolResolver art_lib_handle, SymbolResolver jit_lib_handle){
@@ -67,11 +67,11 @@ public class JitHelper {
         //CompilerOptions_inline_max_code_units = new Member<void, size_t>(
         //            sizeof(void*) + thresholds_count * sizeof(size_t));
 
-        CompilerOptions_inline_max_code_units = new Member(getUnsafe().addressSize() * 2 + thresholds_count);
+        CompilerOptions_inline_max_code_units = new MemberOffest(getUnsafe().addressSize() * 2 + thresholds_count);
 
     }
 
-    public static boolean compileMethod(long nativePeer, NativeObject method){
+    public static boolean compileMethod(NativeObject method){
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             AlterLog.w("JIT compilation is not supported in Android R yet");
             return false;
@@ -85,17 +85,20 @@ public class JitHelper {
         boolean result;
 
         // JIT compilation will modify the state of the thread, so we backup and restore it after compilation.
-        int origin_state_and_flags = 0;//thread->GetStateAndFlags();
+        NativeObject thread = Altercore.getThreadPtr();
+        int origin_state_and_flags = thread.getInt(0);//thread->GetStateAndFlags();
         if (jit_compile_method.isNotNull()) {
             //result = jit_compile_method(compiler, method, thread, false/*osr*/);
+            result = jit_compile_method.invokePointerObject(compiler, method, thread, FALSE_OBJECT).isNotNull();
         } else if (jit_compile_method_q.isNotNull()) {
             //result = jit_compile_method_q(compiler, method, thread, false/*baseline*/, false/*osr*/);
+            result = jit_compile_method_q.invokePointerObject(compiler, method, thread, FALSE_OBJECT, FALSE_OBJECT).isNotNull();
         } else {
             AlterLog.e("Compile method failed: jit_compile_method not found");
             return false;
         }
 
-        result = false;
+        thread.putInt(0, origin_state_and_flags);
 
         return result;
     }

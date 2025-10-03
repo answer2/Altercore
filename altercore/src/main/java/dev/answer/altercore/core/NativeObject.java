@@ -23,6 +23,9 @@ import android.os.Build;
 import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteOrder;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 import dev.answer.altercore.NativeImpl;
 import dev.tmpfs.libcoresyscall.core.IAllocatedMemory;
@@ -260,6 +263,14 @@ public class NativeObject implements Closeable {
     public NativeObject invokePointerObjectL(long... args){
         return new NativeObject(invokePointerL(args));
     }
+    public NativeObject invokePointerObject(NativeObject... args){
+        long[] args_ = new long[args.length];
+        for (int i = 0; i < args.length; i++) {
+            args_[i] = (args[i]).address();
+        }
+        return new NativeObject(invokePointerL(args_));
+    }
+    
 
     public static boolean isCurrentRuntime64Bit() {
         return NativeHelper.isCurrentRuntime64Bit();

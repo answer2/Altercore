@@ -24,4 +24,8 @@ public class AlterConfig {
     public static boolean debug = true;
 
     public static boolean supportUnsafe = true;
+
+    public static final boolean jit_compilation_allowed = true;
+    public static final boolean auto_compile_bridge = true;
+
 }
