@@ -1,5 +1,7 @@
 *.iml
 .gradle
+hiddenapi-stub/build
+core-syscall/build
 /local.properties
 /.idea/caches
 /.idea/libraries
