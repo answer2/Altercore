@@ -15,18 +15,10 @@
  *
  * Created by AnswerDev
  */
-package dev.answer.altercore;
 
-public class AlterConfig {
-    /**
-     * Whether we need to print more detailed logs.
-     */
-    public static boolean debug = true;
+package dev.answer.altercore.core.trampoline.arch;
 
-    public static boolean supportUnsafe = true;
+public abstract class ShellCode {
 
-    public static final boolean jit_compilation_allowed = true;
-    public static final boolean auto_compile_bridge = true;
-    public static final boolean anti_checks = true;
-
+    public abstract String getName();
 }

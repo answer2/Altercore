@@ -39,7 +39,6 @@ public class NativeImpl {
     public static synchronized byte[] get(long address, int size){
         byte[] bytes = new byte[size];
         getUnsafe().copyMemoryToPrimitiveArray(address, bytes, 0, size);
-        System.out.println(Arrays.toString( bytes));
         return bytes;
     }
 

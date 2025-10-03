@@ -44,9 +44,16 @@ public class AlterLog {
         return Log.w(TAG, String.format(s));
     }
 
+
     public static int e(String s) {
+        return Log.e(TAG, String.format(s));
+    }
+
+    public static int eA(String s, Object... arg) {
         return Log.e(TAG, s);
     }
+
+
 
     public static int e(String s, Throwable t) {
         return Log.e(TAG, s, t);

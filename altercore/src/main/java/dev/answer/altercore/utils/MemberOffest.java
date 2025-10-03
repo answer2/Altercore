@@ -24,13 +24,13 @@ import dev.answer.altercore.NativeImpl;
 import dev.answer.altercore.core.NativeObject;
 
 public class MemberOffest extends NativeObject {
-    private long mOffest;
+    private long mOffest = -1;
 
     public MemberOffest() {
-        super(0);
+        super(-1);
     }
     public MemberOffest(long offest) {
-        super(0);
+        super(-1);
         this.mOffest = offest;
     }
 
@@ -61,6 +61,10 @@ public class MemberOffest extends NativeObject {
     }
     public void set(long instance, NativeObject value) {
         setAs(instance, value.address());
+    }
+
+    public void set(NativeObject instance, long value) {
+        setAs(instance.address(), value);
     }
 
     public void set(long instance, long value) {

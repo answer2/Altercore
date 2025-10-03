@@ -48,79 +48,86 @@ public class Altercore {
     private static SymbolResolver art_compiler_module;
     private static long fromReflectedMethod;
     private static long getEnv;
+    private static int expected_access_flags;
 
 
-    private  static native void a();
-    private  static native void b();
-
+    private static native void a();
+    private static native void b();
     private interface Interface {
         void c();
     }
 
-    private static SymbolResolver libopenjdkjvmti ;
-
-    public static void init(){
-
-    }
-
-    private static int expected_access_flags;
-
-    static {
-
+    public static void init() {
         try {
-            Field field =Thread.class.getDeclaredField("nativePeer");
+            Field field = Thread.class.getDeclaredField("nativePeer");
             field.setAccessible(true);
             nativePeer = field.getLong(Thread.currentThread());
 
 
-
             art_module = SymbolResolver.getModule("libart.so");
             art_compiler_module = SymbolResolver.getModule("libart-compiler.so");
-            libopenjdkjvmti = SymbolResolver.getModule("libopenjdkjvmti.so");
 
-            jit_compile_method = art_compiler_module.getSymbolAddress("_ZN3art3jit11JitCompiler13CompileMethodEPNS_6ThreadEPNS0_15JitMemoryRegionEPNS_9ArtMethodEbb");
-            jit_load = art_compiler_module.getSymbolAddress("jit_load");
-            getEnv = art_module .getSymbolAddress("_ZN3art3JII6GetEnvEP7_JavaVMPPvi");
-
-            addWeakGloablReference = art_module.getSymbolAddress("_ZN3art9JavaVMExt16AddWeakGlobalRefEPNS_6ThreadENS_6ObjPtrINS_6mirror6ObjectEEE");
-
-            fromReflectedMethod = art_module.getSymbolAddress("_ZN3art12_GLOBAL__N_18CheckJNI19FromReflectedMethodEP7_JNIEnvP8_jobject");
-
-
-            jit_compiler_handle_ = NativeAccess.callPointerFunction(jit_load, FALSE);
-
-            System.out.println("This is addWeakGloablReference : " + addWeakGloablReference);
-            System.out.println("This is jit_compile_method : " + jit_compile_method);
-            System.out.println("This is jit_load :" + jit_load);
-            System.out.println("This is jit_compiler_handle_ :" + jit_compiler_handle_);
-
-            System.out.println("GetEnv : "+ getEnv().address());
-
+            ArtMethodObject.init(art_module);
             JitHelper.init(art_module, art_compiler_module);
-            
+
             ArtMethodObject artMethod_a = new ArtMethodObject(Altercore.class.getDeclaredMethod("a"));
             ArtMethodObject artMethod_b = new ArtMethodObject(Altercore.class.getDeclaredMethod("b"));
 
-             expected_access_flags = artMethod_a.getMemeber().getModifiers();
-            expected_access_flags = AccessFlags.kPrivate | AccessFlags.kStatic | AccessFlags.kNative;
+            if (artMethod_a != null) // FindMethodID("getAccessFlags", "()I"); give up this
+                expected_access_flags = artMethod_a.getMemeber().getModifiers();
+            else
+                expected_access_flags = AccessFlags.kPrivate | AccessFlags.kStatic | AccessFlags.kNative;
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 expected_access_flags |= AccessFlags.kPublicApi;
             }
 
             ArtMethodObject artMethod_c = new ArtMethodObject(Altercore.Interface.class.getDeclaredMethod("c"));
+            ArtMethodObject.init(artMethod_a, artMethod_b, artMethod_c, expected_access_flags);
+
+            if (ArtMethodObject.getQuickToInterpreterBridge() != null) {
+                // This is a workaround for art_quick_to_interpreter_bridge not found.
+                // This case is almost impossible to enter
+                // because its symbols are found almost always on all devices.
+                // But if it happened... Try to get it with an abstract method (it is not compilable
+                // and its entry is art_quick_to_interpreter_bridge)
+                // Note: We DO NOT use platform's abstract methods
+                // because their entry may not be interpreter entry.
+
+                AlterLog.e("art_quick_to_interpreter_bridge not found, try workaround");
+
+                NativeObject entry = artMethod_c.getEntryPointFromCompiledCode();
+                AlterLog.eA("New art_quick_to_interpreter_bridge %p", entry);
+                ArtMethodObject.setQuickToInterpreterBridge(entry);
+            }
 
 
-            AlterLog.d("artMethod :" + artMethod_a.address());
-            AlterLog.d("FromCompiledCode :" + artMethod_a.getArtMethodEntryFromCompiledCode().address());
-            AlterLog.d("getArtMethodEntry :" + artMethod_a.getArtMethodEntry());
+            if (AlterConfig.debug) {
+
+                jit_compile_method = art_compiler_module.getSymbolAddress("_ZN3art3jit11JitCompiler13CompileMethodEPNS_6ThreadEPNS0_15JitMemoryRegionEPNS_9ArtMethodEbb");
+                jit_load = art_compiler_module.getSymbolAddress("jit_load");
+                getEnv = art_module.getSymbolAddress("_ZN3art3JII6GetEnvEP7_JavaVMPPvi");
+
+                addWeakGloablReference = art_module.getSymbolAddress("_ZN3art9JavaVMExt16AddWeakGlobalRefEPNS_6ThreadENS_6ObjPtrINS_6mirror6ObjectEEE");
+                fromReflectedMethod = art_module.getSymbolAddress("_ZN3art12_GLOBAL__N_18CheckJNI19FromReflectedMethodEP7_JNIEnvP8_jobject");
+
+
+                jit_compiler_handle_ = NativeAccess.callPointerFunction(jit_load, FALSE);
+                System.out.println("This is addWeakGloablReference : " + addWeakGloablReference);
+                System.out.println("This is jit_compile_method : " + jit_compile_method);
+                System.out.println("This is jit_load :" + jit_load);
+                System.out.println("This is jit_compiler_handle_ :" + jit_compiler_handle_);
+                System.out.println("GetEnv : " + getEnv().address());
+
+                AlterLog.d("artMethod :" + artMethod_a.address());
+                AlterLog.d("FromCompiledCode :" + artMethod_a.getArtMethodEntryFromCompiledCode().address());
+                AlterLog.d("getArtMethodEntry :" + artMethod_a.getArtMethodEntry());
 //            AlterLog.d(""+ JitHelper.compileMethod(artMethod));
 
-            NativeObject runtime = new NativeObject( art_module.getSymbolAddress("_ZN3art7Runtime9instance_E"));
-            AlterLog.d("Runtime: " + runtime.address());
-            AlterLog.d("Runtime :" + runtime.peekPointer().address());
-
-
+                NativeObject runtime = new NativeObject(art_module.getSymbolAddress("_ZN3art7Runtime9instance_E"));
+                AlterLog.d("Runtime: " + runtime.address());
+                AlterLog.d("Runtime :" + runtime.peekPointer().address());
+            }
 
 
         } catch (Exception e) {
@@ -128,9 +135,9 @@ public class Altercore {
         }
     }
 
-    public static NativeObject getSymbol(SymbolResolver symbolResolver, String symbol){
+    public static NativeObject getSymbol(SymbolResolver symbolResolver, String symbol) {
         long address = symbolResolver.getSymbolAddress(symbol);
-       return new NativeObject(address);
+        return new NativeObject(address);
     }
 
     // 双指针
@@ -139,7 +146,7 @@ public class Altercore {
         long javaVM = NativeAccess.getJavaVM();
         int size = theUnsafe.addressSize();
         // Allocate memory for the JNIEnv pointer
-        try  {
+        try {
             NativeObject envPtr = new NativeObject(false, size);
             // Call GetEnv - this should write the JNIEnv pointer to our allocated memory
             long result = NativeAccess.callPointerFunction(
@@ -152,7 +159,7 @@ public class Altercore {
             } else {
                 throw new RuntimeException("Failed to get JNI environment, error: " + result);
             }
-        }catch (Exception e){
+        } catch (Exception e) {
             throw new AlterException("Failed to get JNI environment, error: " + e.getMessage());
         }
     }
@@ -160,7 +167,7 @@ public class Altercore {
 
     public static void hook0(long thread, Class<?> declaring, Object hookRecord,
                              Member javaTarget, Member javaBridge, boolean isInlineHook,
-                             boolean jni, boolean proxy){
+                             boolean jni, boolean proxy) {
 
         ArtMethodObject target = new ArtMethodObject(javaTarget);
         ArtMethodObject bridge = new ArtMethodObject(javaBridge);
@@ -169,34 +176,42 @@ public class Altercore {
             // The bridge method entry will be hardcoded in the trampoline, subsequent optimization
             // operations that require modification of the bridge method entry will not take effect.
             // Try to do JIT compilation first to get the best performance.
-//            bridge->Compile(thread);
+            bridge.compile();
         }
+
+        boolean is_inline_hook = JBOOL_TRUE(isInlineHook);
+        final boolean is_native = JBOOL_TRUE(jni);
+        final boolean is_proxy = JBOOL_TRUE(proxy);
+        final boolean is_native_or_proxy = is_native || is_proxy;
 
     }
 
-    public static void compile_Method(Method method, long nativePeer){
+    public static boolean JBOOL_TRUE(boolean x) {
+        return x != false;
+    }
+
+    public static void compile_Method(Method method, long nativePeer) {
 
     }
 
     // &runtime runtime的指针
-    public static NativeObject getRuntime(){
-        NativeObject runtime = new NativeObject( art_module.getSymbolAddress("_ZN3art7Runtime9instance_E"));
-      return runtime.peekPointer();
+    public static NativeObject getRuntime() {
+        NativeObject runtime = new NativeObject(art_module.getSymbolAddress("_ZN3art7Runtime9instance_E"));
+        return runtime.peekPointer();
     }
 
 
-    public static NativeObject getThreadPtr(){
+    public static NativeObject getThreadPtr() {
         try {
             Field field = Thread.class.getDeclaredField("nativePeer");
             field.setAccessible(true);
             long nativePeer = field.getLong(Thread.currentThread());
             return new NativeObject(nativePeer);
-        }catch (Exception e){
+        } catch (Exception e) {
             AlterLog.e("Geting nativePeer, but Failure! reason:" + e.getMessage());
         }
         return NativeObject.EMPTY_OBJECT;
     }
-
 
 
     public static Object getObject(long nativePeer, long address) {
