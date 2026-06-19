@@ -22,18 +22,28 @@ import android.os.Build;
 import androidx.annotation.NonNull;
 import androidx.annotation.RequiresApi;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Executable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Member;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.Objects;
 
 import dev.answer.altercore.AlterConfig;
 import dev.answer.altercore.NativeImpl;
+import dev.answer.altercore.core.trampoline.arch.Arm64;
+import dev.answer.altercore.core.trampoline.arch.ShellCode;
 import dev.answer.altercore.utils.AlterLog;
 import dev.answer.altercore.utils.MemberOffest;
 import dev.tmpfs.libcoresyscall.core.NativeHelper;
 import dev.tmpfs.libcoresyscall.core.impl.ArtMethodHelper;
 import dev.tmpfs.libcoresyscall.core.impl.ReflectHelper;
+import dev.tmpfs.libcoresyscall.core.impl.trampoline.BaseShellcode;
+import dev.tmpfs.libcoresyscall.core.impl.trampoline.TrampolineCreatorFactory;
+import dev.tmpfs.libcoresyscall.core.impl.trampoline.TrampolineInfo;
 import dev.tmpfs.libcoresyscall.elfloader.SymbolResolver;
 
 public class ArtMethodObject extends NativeObject {
@@ -206,7 +216,7 @@ public class ArtMethodObject extends NativeObject {
                         getDefaultEntryPointFromQuickCompiledCodeOffset());
             }
 
-            // 处理Android N以下的interpreter entry point
+            // 处理Android N(24)以下的interpreter entry point
             if (android_version < Build.VERSION_CODES.N) {
                 // Not aligned: PtrSizedFields is PACKED(4) in the android version.
                 entryPointFromInterpreter = new MemberOffest(
@@ -475,6 +485,26 @@ public class ArtMethodObject extends NativeObject {
         setAccessFlags(access_flags);
     }
 
+    private static void deopt(long ptr) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return;
+        long addr = ptr + accessFlags.getOffset();
+        int acc = unsafe.getInt(addr);
+        int sdk = Build.VERSION.SDK_INT;
+        if (sdk >= Build.VERSION_CODES.O) {
+            acc &= ~0x8000000;
+            if (sdk >= Build.VERSION_CODES.O_MR1) {
+                acc |= 0x2800000;
+                if (sdk >= Build.VERSION_CODES.Q) {
+                    acc &= ~0x40000000;
+                }
+            }
+        } else {
+            acc |= 0x1000000;
+        }
+
+        unsafe.putInt(addr, acc);
+    }
+
     public void setFastNative() {
         addAccessFlags(AccessFlags.kFastNative);
     }
@@ -507,6 +537,9 @@ public class ArtMethodObject extends NativeObject {
         setAccessFlags(getAccessFlags() & ~flags);
     }
 
+
+
+
     /*
      * due to NativeObject get and set method processing 32 and 64 bit
      */
@@ -518,7 +551,7 @@ public class ArtMethodObject extends NativeObject {
         return entryPointFromCompiledCode.get(this);
     }
 
-    void SetEntryPointFromCompiledCode(NativeObject entry) {
+    public void setEntryPointFromCompiledCode(NativeObject entry) {
 //        if (android_version == Build.VERSION_CODES.LOLLIPOP) {
 //            // Android 5.0, entry_point_from_compiled_code_ is a uint64_t
 //            entry_point_from_compiled_code_.SetAs<uint64_t>(this, reinterpret_cast<uint64_t>(entry));
@@ -535,7 +568,7 @@ public class ArtMethodObject extends NativeObject {
         return entryPointFromJni.get(this);
     }
 
-    void SetEntryPointFromJni(NativeObject entry) {
+    public void setEntryPointFromJni(NativeObject entry) {
 //        if (Android::version == Android::kL) {
 //            // Android 5.0, entry_point_from_jni_ is a uint64_t
 //            entry_point_from_jni_.SetAs<uint64_t>(this, reinterpret_cast<uint64_t>(entry));
@@ -570,6 +603,37 @@ public class ArtMethodObject extends NativeObject {
         art_quick_to_interpreter_bridge = entry;
     }
 
+    private long sTrampolineBase = 0;
+    private BaseShellcode sShellcode = null;
+
+    /**
+     * Get the base address of the trampoline, this address is typically NOT useful.
+     * If the trampoline is not initialized, this method will return 0.
+     */
+    public long getTrampolineBase() {
+        return sTrampolineBase;
+    }
+
+    @NonNull
+    public BaseShellcode getShellcode() {
+        if (sShellcode == null) {
+            sShellcode = TrampolineCreatorFactory.create();
+        }
+        return sShellcode;
+    }
+
+
+    public int getQuickCompiledCodeSize() {
+        BaseShellcode shellcode = getShellcode();
+        TrampolineInfo trampoline = shellcode.generateTrampoline();
+        long entryPoint = getEntryPointFromCompiledCode().getLong(0);
+        long sizeInfo1 = entryPoint - 4;
+        byte[] bytes = NativeImpl.memget(sizeInfo1, 4);
+        int size = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).getInt();
+        AlterLog.d( "getQuickCompiledCodeSize: " + size);
+        return size;
+    }
+
     private static int findOffset(long start, long value, int size, int step) {
         for (int offset = 0; offset < size; offset += step) {
             NativeObject current = new NativeObject((start) + offset);
@@ -591,6 +655,81 @@ public class ArtMethodObject extends NativeObject {
         if (size < 0) size = -size;
         return (int) size;
     }
+
+
+    /**
+     * get the modifiers of origin method/constructor
+     * @return the modifiers
+     */
+    public int getModifiers() {
+        // Member 接口自带 getModifiers()，Method 和 Constructor 均实现
+        return mMember.getModifiers();
+    }
+
+    /**
+     * get the parameter type of origin method/constructor
+     * @return the parameter types.
+     */
+    public Class<?>[] getParameterTypes() {
+        if (mMember instanceof Method) {
+            return ((Method) mMember).getParameterTypes();
+        } else {
+            return ((Constructor<?>) mMember).getParameterTypes();
+        }
+    }
+
+    /**
+     * get the return type of origin method/constructor
+     * @return the return type, if it is a constructor, return Object.class
+     */
+    public Class<?> getReturnType() {
+        if (mMember instanceof Method) {
+            return ((Method) mMember).getReturnType();
+        } else {
+            return Object.class;
+        }
+    }
+
+    /**
+     * get the exception declared by the method/constructor
+     * @return the array of declared exception.
+     */
+    public Class<?>[] getExceptionTypes() {
+        if (mMember instanceof Method) {
+            return ((Method) mMember).getExceptionTypes();
+        } else {
+            return ((Constructor<?>) mMember).getExceptionTypes();
+        }
+    }
+
+    public String toGenericString() {
+        var member = mMember;
+        if (member instanceof Method) {
+            return ((Method) member).toGenericString();
+        } else if (member instanceof Constructor) {
+            return ((Constructor<?>) member).toGenericString();
+        } else {
+            // 如果 mMember 是其他类型（如 Field），可自行处理或返回普通 toString
+            return member.toString();
+        }
+    }
+
+    public MethodInfo getMethodInfo() {
+        MethodInfo methodInfo = new MethodInfo();
+        methodInfo.isStatic = Modifier.isStatic(getModifiers());
+        final Class<?>[] parameterTypes = getParameterTypes();
+        if (parameterTypes != null) {
+            methodInfo.paramNumber = parameterTypes.length;
+            methodInfo.paramTypes = parameterTypes;
+        } else {
+            methodInfo.paramNumber = 0;
+            methodInfo.paramTypes = new Class<?>[0];
+        }
+        methodInfo.returnType = getReturnType();
+        methodInfo.method = this;
+        return methodInfo;
+    }
+
 
 
 }

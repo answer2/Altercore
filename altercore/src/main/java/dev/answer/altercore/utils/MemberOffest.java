@@ -22,6 +22,7 @@ import static dev.answer.altercore.utils.UnsafeWrapper.getUnsafe;
 
 import dev.answer.altercore.NativeImpl;
 import dev.answer.altercore.core.NativeObject;
+import libcore.io.Memory;
 
 public class MemberOffest extends NativeObject {
     private long mOffest = -1;
@@ -53,11 +54,14 @@ public class MemberOffest extends NativeObject {
         if (!isValid()) {
             return;
         }
-        NativeImpl.memcpy(instance + mOffest, value, getUnsafe().addressSize());
+        getUnsafe().putInt(instance+mOffest, (int) value);
+        //Memory.pokeLong(instance+mOffest, value, false);
+        //NativeImpl.memcpy(new NativeObject(instance+mOffest).address(), value, getUnsafe().addressSize());
     }
 
     public void set(NativeObject instance, NativeObject value) {
-        setAs(instance.address(), value.address());
+        NativeObject object = new NativeObject(instance.address() + getOffset());
+        instance.pokePointer((int) getOffset(), value.peekPointer());
     }
     public void set(long instance, NativeObject value) {
         setAs(instance, value.address());

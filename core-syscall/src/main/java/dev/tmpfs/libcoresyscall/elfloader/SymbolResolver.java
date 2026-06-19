@@ -110,4 +110,8 @@ public class SymbolResolver {
         return mBaseAddress + offset;
     }
 
+    public boolean hasSymbol(String symbol){
+        return mElfView.hasSymbol(symbol)
+    }
+
 }

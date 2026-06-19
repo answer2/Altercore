@@ -4,7 +4,7 @@ plugins {
 
 android {
     namespace = "dev.answer.altercore"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 21
@@ -23,6 +23,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+    buildToolsVersion = "36.0.0"
+    ndkVersion = "27.0.12077973"
 }
 
 dependencies {

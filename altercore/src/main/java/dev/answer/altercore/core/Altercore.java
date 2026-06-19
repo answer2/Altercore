@@ -24,6 +24,7 @@ import android.os.Build;
 import java.lang.reflect.Field;
 import java.lang.reflect.Member;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 
 import dev.answer.altercore.AlterConfig;
 import dev.answer.altercore.utils.AlterException;
@@ -127,6 +128,23 @@ public class Altercore {
                 NativeObject runtime = new NativeObject(art_module.getSymbolAddress("_ZN3art7Runtime9instance_E"));
                 AlterLog.d("Runtime: " + runtime.address());
                 AlterLog.d("Runtime :" + runtime.peekPointer().address());
+
+                ArtMethodObject aa = new ArtMethodObject(Altercore.class.getDeclaredMethod("aaa"));
+                ArtMethodObject bb = new ArtMethodObject(Altercore.class.getDeclaredMethod("bbb"));
+//                AlterLog.d(aa.getArtMethodEntryFromCompiledCode().peekPointer().address()+"");
+//                AlterLog.d(bb.getEntryPointFromCompiledCode()+"");
+                aa.setEntryPointFromCompiledCode(bb.getEntryPointFromCompiledCode());
+                //aa.setEntryPointFromJni(bb.getEntryPointFromJni());
+                AlterLog.d(aa.getArtMethodEntryFromCompiledCode().address()+"");
+                aa.setFastNative();
+                AlterLog.d( aa.compile()+"");
+
+                AlterLog.w("JIT compilation");
+
+                AlterLog.d(aa.getMemeber()+""+ aa.IsStatic());
+
+                new Altercore().aaa();
+
             }
 
 
@@ -134,6 +152,14 @@ public class Altercore {
             e.printStackTrace();
         }
     }
+    public void aaa(){
+        AlterLog.d("Hello, I am aaa");
+    }
+
+    public static void bbb(){
+        AlterLog.d("Hello, I am bbb");
+    }
+
 
     public static NativeObject getSymbol(SymbolResolver symbolResolver, String symbol) {
         long address = symbolResolver.getSymbolAddress(symbol);

@@ -193,7 +193,7 @@ public class NativeLoader {
     }
 
     public long dlsym(@NonNull String symbol){
-        return DlExtLibraryLoader.dlsym(mHandle, "JNI_OnLoad");
+        return DlExtLibraryLoader.dlsym(mHandle, symbol);
     }
 
     public long callPointerFunction(long func, long... args){

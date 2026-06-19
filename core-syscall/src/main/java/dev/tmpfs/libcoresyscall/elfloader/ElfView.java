@@ -296,6 +296,20 @@ public class ElfView {
         return 0;
     }
 
+    public boolean hasSymbol(@NonNull String symbol) {
+        boolean isExistDynamic = false;
+        boolean isExistDebug = false;
+        // search in .dynsym
+        if (mDynamicSymbols != null) {
+                 isExistDynamic= mDynamicSymbols.containsKey(symbol);
+        }
+        // search in .symtab
+        if (mDebugSymbols != null) {
+            isExistDebug = mDebugSymbols.containsKey(symbol);
+        }
+        return isExistDebug || isExistDynamic;
+    }
+
     public HashMap<String, Long> getDynamicSymbols() {
         return new HashMap<>(mDynamicSymbols);
     }

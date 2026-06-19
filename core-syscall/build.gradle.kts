@@ -5,8 +5,7 @@ plugins {
 
 android {
     namespace = "dev.tmpfs.libcoresyscall.core"
-
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 21
@@ -24,7 +23,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_1_8
         sourceCompatibility = JavaVersion.VERSION_1_8
     }
-    buildToolsVersion = "35.0.0"
+    buildToolsVersion = "36.0.0"
 
 }
 dependencies {

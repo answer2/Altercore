@@ -72,6 +72,7 @@ public class JitHelper {
     }
 
     public static boolean compileMethod(NativeObject method){
+        AlterLog.w("JIT compilation is not supported in Android R yet");
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             AlterLog.w("JIT compilation is not supported in Android R yet");
             return false;

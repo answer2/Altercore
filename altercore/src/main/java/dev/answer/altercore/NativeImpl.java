@@ -19,19 +19,102 @@ package dev.answer.altercore;
 
 import static dev.answer.altercore.utils.UnsafeWrapper.getUnsafe;
 
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.OsConstants;
+
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
 
 
 import dev.answer.altercore.core.NativeObject;
+import dev.answer.altercore.utils.AlterLog;
+import dev.tmpfs.libcoresyscall.core.MemoryAccess;
 import dev.tmpfs.libcoresyscall.core.MemoryAllocator;
 import dev.tmpfs.libcoresyscall.core.NativeAccess;
 import dev.tmpfs.libcoresyscall.core.NativeHelper;
+import dev.tmpfs.libcoresyscall.core.Syscall;
 import dev.tmpfs.libcoresyscall.elfloader.SymbolResolver;
+import sun.misc.Unsafe;
 
 public class NativeImpl {
     private static final int length = getUnsafe().addressSize();
+    private static final Unsafe theUnsafe = getUnsafe();
+
+
+    /** The value of {@code arrayBaseOffset(boolean[].class)} */
+    public static final int ARRAY_BOOLEAN_BASE_OFFSET
+            = theUnsafe.arrayBaseOffset(boolean[].class);
+
+    /** The value of {@code arrayBaseOffset(byte[].class)} */
+    public static final int ARRAY_BYTE_BASE_OFFSET
+            = theUnsafe.arrayBaseOffset(byte[].class);
+
+    /** The value of {@code arrayBaseOffset(short[].class)} */
+    public static final int ARRAY_SHORT_BASE_OFFSET
+            = theUnsafe.arrayBaseOffset(short[].class);
+
+    /** The value of {@code arrayBaseOffset(char[].class)} */
+    public static final int ARRAY_CHAR_BASE_OFFSET
+            = theUnsafe.arrayBaseOffset(char[].class);
+
+    /** The value of {@code arrayBaseOffset(int[].class)} */
+    public static final int ARRAY_INT_BASE_OFFSET
+            = theUnsafe.arrayBaseOffset(int[].class);
+
+    /** The value of {@code arrayBaseOffset(long[].class)} */
+    public static final int ARRAY_LONG_BASE_OFFSET
+            = theUnsafe.arrayBaseOffset(long[].class);
+
+    /** The value of {@code arrayBaseOffset(float[].class)} */
+    public static final int ARRAY_FLOAT_BASE_OFFSET
+            = theUnsafe.arrayBaseOffset(float[].class);
+
+    /** The value of {@code arrayBaseOffset(double[].class)} */
+    public static final int ARRAY_DOUBLE_BASE_OFFSET
+            = theUnsafe.arrayBaseOffset(double[].class);
+
+    /** The value of {@code arrayBaseOffset(Object[].class)} */
+    public static final int ARRAY_OBJECT_BASE_OFFSET
+            = theUnsafe.arrayBaseOffset(Object[].class);
+
+    /** The value of {@code arrayIndexScale(boolean[].class)} */
+    public static final int ARRAY_BOOLEAN_INDEX_SCALE
+            = theUnsafe.arrayIndexScale(boolean[].class);
+
+    /** The value of {@code arrayIndexScale(byte[].class)} */
+    public static final int ARRAY_BYTE_INDEX_SCALE
+            = theUnsafe.arrayIndexScale(byte[].class);
+
+    /** The value of {@code arrayIndexScale(short[].class)} */
+    public static final int ARRAY_SHORT_INDEX_SCALE
+            = theUnsafe.arrayIndexScale(short[].class);
+
+    /** The value of {@code arrayIndexScale(char[].class)} */
+    public static final int ARRAY_CHAR_INDEX_SCALE
+            = theUnsafe.arrayIndexScale(char[].class);
+
+    /** The value of {@code arrayIndexScale(int[].class)} */
+    public static final int ARRAY_INT_INDEX_SCALE
+            = theUnsafe.arrayIndexScale(int[].class);
+
+    /** The value of {@code arrayIndexScale(long[].class)} */
+    public static final int ARRAY_LONG_INDEX_SCALE
+            = theUnsafe.arrayIndexScale(long[].class);
+
+    /** The value of {@code arrayIndexScale(float[].class)} */
+    public static final int ARRAY_FLOAT_INDEX_SCALE
+            = theUnsafe.arrayIndexScale(float[].class);
+
+    /** The value of {@code arrayIndexScale(double[].class)} */
+    public static final int ARRAY_DOUBLE_INDEX_SCALE
+            = theUnsafe.arrayIndexScale(double[].class);
+
+    /** The value of {@code arrayIndexScale(Object[].class)} */
+    public static final int ARRAY_OBJECT_INDEX_SCALE
+            = theUnsafe.arrayIndexScale(Object[].class);
+
     public static void memcpy(long src, long dest, int length) {
         getUnsafe().copyMemory(src, dest, length);
     }
@@ -46,9 +129,87 @@ public class NativeImpl {
         getUnsafe().copyMemoryFromPrimitiveArray(bytes, 0,address, bytes.length);
     }
 
+    public static long mmap(int length) {
+        try {
+            final int MAP_ANONYMOUS = 0x20;
+            long address = Os.mmap(0, length,
+                    OsConstants.PROT_READ | OsConstants.PROT_WRITE | OsConstants.PROT_EXEC,
+                    OsConstants.MAP_PRIVATE | MAP_ANONYMOUS,
+                    null, 0);
+            return address;
+        } catch (ErrnoException e) {
+            AlterLog.v("mmap failed: " + e.errno);
+            return 0L;
+        }
+    }
+
+    /**
+     * 取消内存映射
+     * @param addr   映射起始地址（必须页对齐，通常由 mmap 返回）
+     * @param length 映射长度（单位：字节）
+     * @return true 成功，false 失败
+     */
+    public static boolean munmap(long addr, long length) {
+        try {
+            // 直接调用 Os.munmap
+            Os.munmap(addr, length);
+            return true;
+        } catch (ErrnoException e) {
+            AlterLog.v( "munmap failed: " + e.getMessage() + " (" + e.errno + ")");
+            return false;
+        }
+    }
+
+    /**
+     * 修改内存页保护属性为可读、可写、可执行
+     * @param addr 起始地址（可能未页对齐）
+     * @param len  需要保护的长度
+     * @return true 成功，false 失败
+     */
+    public static boolean munprotect(long addr, long len) {
+        // 获取页大小
+        long pageSize = getPageSize();
+        // 计算偏移
+        long alignment = addr % pageSize;
+        AlterLog.v( "munprotect page size: " + pageSize + ", alignment: " + alignment);
+
+        // 对齐起始地址，并计算总长度
+        long start = addr - alignment;
+        long total = alignment + len;
+
+        try {
+            Syscall.mprotect(start, total,
+                    OsConstants.PROT_READ | OsConstants.PROT_WRITE | OsConstants.PROT_EXEC);
+            return true;
+        } catch (ErrnoException e) {
+            AlterLog.v( "mprotect failed: " + e.getMessage() + " (" + e.errno + ")");
+            return false;
+        }
+    }
+
+    /**
+     * 获取系统页大小（单位：字节）
+     */
+    private static long getPageSize() {
+        return (int) MemoryAccess.getPageSize();
+    }
+
+
+    public static void memput(byte[] bytes, long addr) {
+        var len = bytes.length;
+        copyMemory(bytes, addr, len);
+        getUnsafe().putByte(addr + len, (byte) 0);
+    }
+
+    public static byte[] memget(long addr, int length) {
+        byte[] bytes = new byte[length];
+        getUnsafe().copyMemory(null, addr, bytes, ARRAY_BYTE_BASE_OFFSET, length);
+        return bytes;
+    }
+
     public static synchronized long read(long base, long offset) {
         long address = base + offset;
-        byte[] bytes = get(address, length);
+        byte[] bytes = memget(address, length);
         if (length == 4) {
             return ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).getInt() & 0xFFFFFFFFL;
         } else {
@@ -68,8 +229,38 @@ public class NativeImpl {
         } else {
             bytes = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putLong(value).array();
         }
-        put(bytes, address);
+        memput(bytes, address);
     }
+
+
+    private static void copyMemory(Object srcArray, long dstAddr, int len) {
+        var u = getUnsafe();
+        try {
+            u.copyMemoryFromPrimitiveArray(srcArray, 0, dstAddr, len);
+            return;
+        } catch (NoSuchMethodError ignored) {
+        }
+        Object[] arr = {srcArray};
+        int srcAddr =
+                u.getInt(arr, u.arrayBaseOffset(Object[].class))
+                        + u.arrayBaseOffset(srcArray.getClass());
+        u.copyMemory(srcAddr, dstAddr, len);
+    }
+
+    private static void copyMemory(long srcAddr, Object dstArray, int len) {
+        var u = getUnsafe();
+        try {
+            u.copyMemoryToPrimitiveArray(srcAddr, dstArray, 0, len);
+            return;
+        } catch (NoSuchMethodError ignored) {
+        }
+        Object[] arr = {dstArray};
+        int dstAddr =
+                u.getInt(arr, u.arrayBaseOffset(Object[].class))
+                        + u.arrayBaseOffset(dstArray.getClass());
+        u.copyMemory(srcAddr, dstAddr, len);
+    }
+
 
 
     /**
