@@ -11,7 +11,7 @@ Please note that this project is currently under active development – its API 
 
 ## Features
 
-+ Support Android 5.0 - 17 (API level 21 - 37)
++ Support Android 8.0 - 17 (API level 28 - 37)
 + Support armeabi-v7a, arm64-v8a, x86, x86-64, riscv64
 
 ## Quick Start
