@@ -1,4 +1,28 @@
-package com.v7878.vmtools;
+/*
+ * MIT License
+ *
+ * Copyright (c) 2026 vova7878
+ * Modify 2026 AnswerDev
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+package dev.answer.altercore.core;
 
 import static com.v7878.dex.DexConstants.ACC_CONSTRUCTOR;
 import static com.v7878.dex.DexConstants.ACC_FINAL;
@@ -13,7 +37,7 @@ import static com.v7878.unsafe.Reflection.getArtMethod;
 import static com.v7878.unsafe.Reflection.getDeclaredField;
 import static com.v7878.unsafe.Reflection.getDeclaredMethod;
 import static com.v7878.unsafe.Reflection.unreflect;
-import static com.v7878.vmtools._Utils.rawMethodTypeOf;
+import static dev.answer.altercore.utils._Utils.rawMethodTypeOf;
 
 import android.os.Build;
 
@@ -39,7 +63,8 @@ import com.v7878.unsafe.Utils.WeakReferenceCache;
 import com.v7878.unsafe.access.InvokeAccess;
 import com.v7878.unsafe.invoke.MethodHandlesImpl;
 import com.v7878.unsafe.invoke.Transformers;
-import com.v7878.vmtools.Runtime.DebugState;
+
+import dev.answer.altercore.core.Runtime.DebugState;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodType;
@@ -48,7 +73,6 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Objects;
 
-@RequiresApi(api = Build.VERSION_CODES.O)
 public class Hooks {
     static {
         // Classes cannot be loaded and initialized during "SuspendAll"

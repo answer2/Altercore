@@ -1,14 +1,11 @@
-package com.v7878.vmtools;
+package dev.answer.altercore.utils;
 
 import static com.v7878.unsafe.AndroidUnsafe.PAGE_SIZE;
 import static com.v7878.unsafe.Utils.shouldNotHappen;
 import static com.v7878.unsafe.misc.Math.roundDownUL;
 import static com.v7878.unsafe.misc.Math.roundUpUL;
 
-import android.os.Build;
 import android.system.ErrnoException;
-
-import androidx.annotation.RequiresApi;
 
 import com.v7878.unsafe.io.IOUtils;
 
@@ -21,7 +18,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class _Utils {
-    @RequiresApi(api = Build.VERSION_CODES.O)
     public static MethodType rawMethodTypeOf(Executable ex) {
         Class<?> ret;
         List<Class<?>> args = new ArrayList<>();
