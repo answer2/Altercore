@@ -14,6 +14,24 @@ Please note that this project is currently under active development – its API 
 + Support Android 8.0 - 17 (API level 26 - 37)
 + Support armeabi-v7a, arm64-v8a, x86, x86-64, riscv64
 
+## Usage
+### Basic Usage
+[![Download](https://img.shields.io/maven-central/v/io.github.answer2.altercore/core.svg)](https://repo1.maven.org/maven2/io/github/answer2/altercore/core/)
+
+Add dependencies in build.gradle:
+```groovy
+dependencies {
+    implementation 'io.github.answer2.altercore:core:<version>'
+}
+```
+
+Add dependencies in build.gradle.kts:
+```groovy
+dependencies {
+    implementation("io.github.answer2.altercore:core:<version>")
+}
+```
+
 ## Quick Start
 
 ### Before and After Hook
