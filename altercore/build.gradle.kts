@@ -5,7 +5,6 @@ import com.vanniktech.maven.publish.SourcesJar
 plugins {
     id("com.android.library")
     id("com.vanniktech.maven.publish") version "0.36.0"
-    id("signing")
 }
 
 android {
@@ -19,8 +18,6 @@ android {
 
     defaultConfig {
         minSdk = 26
-
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -38,10 +35,9 @@ android {
 
 dependencies {
 
-
-    api(libs.panama.core)
-    api(libs.panama.unsafe)
-    api(libs.panama.llvm)
+    implementation(libs.panama.core)
+    implementation(libs.panama.unsafe)
+    implementation(libs.panama.llvm)
 
     implementation(libs.sun.cleaner)
     implementation(libs.r8.annotations)
@@ -64,7 +60,7 @@ mavenPublishing {
     coordinates(
         groupId = "io.github.answer2.altercore",
         artifactId = "core",
-        version = "1.0.1"
+        version = "1.0.3"
     )
 
     // POM 信息（必须填写完整）
