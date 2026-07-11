@@ -45,13 +45,6 @@ dependencies {
 
     implementation(libs.sun.cleaner)
     implementation(libs.r8.annotations)
-
-    implementation(libs.androidx.appcompat)
-    implementation(libs.androidx.core.ktx)
-    implementation(libs.material)
-    testImplementation(libs.junit)
-    androidTestImplementation(libs.androidx.espresso.core)
-    androidTestImplementation(libs.androidx.junit)
 }
 
 mavenPublishing {
@@ -71,13 +64,13 @@ mavenPublishing {
     coordinates(
         groupId = "io.github.answer2.altercore",
         artifactId = "core",
-        version = "1.0.0"
+        version = "0.0.1"
     )
 
     // POM 信息（必须填写完整）
     pom {
         name.set("AlterCore")
-        description.set("A core library for Android")
+        description.set("A pure-Java Android ART hook library")
         inceptionYear.set("2026")
         url.set("https://github.com/answer2/Altercore")
 
