@@ -59,12 +59,15 @@ import dev.answer.altercore.callback.MethodHook;
 public final class HookRecord {
     public final Executable target;
     public final long artMethod;
+    public Method bridge;
     public Method backup;
+    public long trampoline;
     public boolean isStatic;
     public int paramNumber;
     public Class<?>[] paramTypes;
     private Set<MethodHook> callbacks = new HashSet<>();
-
+    public volatile Object paramTypesCache;
+    public boolean skipUpdateDeclaringClass;
     public HookRecord(Executable target, long artMethod) {
         this.target = target;
         this.artMethod = artMethod;

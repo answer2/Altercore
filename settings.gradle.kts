@@ -29,3 +29,4 @@ dependencyResolutionManagement {
 rootProject.name = "AlterCore"
 include(":app")
 include(":altercore")
+include(":xposed")

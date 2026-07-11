@@ -52,6 +52,8 @@ package dev.answer.altercore.core;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Member;
 
+import dev.answer.altercore.AlterCore;
+
 public class HookParams {
     /**
      * The calling method.
@@ -159,4 +161,22 @@ public class HookParams {
         this.throwable = null;
         this.returnEarly = false;
     }
+
+    /**
+     * Invokes the original (un-hooked) implementation of the target with the current
+     * {@code thisObject} and {@code args} already captured by this callback invocation.
+     */
+    public Object invokeOriginalMethod() throws IllegalAccessException, InvocationTargetException {
+        return invokeOriginalMethod(thisObject, args);
+    }
+
+    /**
+     * Invokes the original (un-hooked) implementation of the target with an explicit
+     * receiver and arguments, instead of the ones captured by this callback invocation.
+     */
+    public Object invokeOriginalMethod(Object thisObject, Object... args)
+            throws IllegalAccessException, InvocationTargetException {
+        return AlterCore.invokeOriginalMethod(hookRecord.target, thisObject, args);
+    }
+
 }

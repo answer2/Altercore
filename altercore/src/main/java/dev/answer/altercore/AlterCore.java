@@ -18,6 +18,7 @@ package dev.answer.altercore;
 
 import static com.v7878.dex.DexConstants.ACC_PUBLIC;
 import static com.v7878.dex.DexConstants.ACC_STATIC;
+import static com.v7878.unsafe.Reflection.getArtMethod;
 import static dev.answer.altercore.utils._Utils.rawMethodTypeOf;
 
 import android.util.Log;
@@ -40,6 +41,8 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodType;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Executable;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Member;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
@@ -53,6 +56,7 @@ import dev.answer.altercore.core.HookRecord;
 public class AlterCore {
 
     private static final String TAG = "AlterCore";
+    public static final Object[] EMPTY_OBJECT_ARRAY = new Object[0];
     private static final Map<Long, HookRecord> sHookRecords = new ConcurrentHashMap<>();
     private static final Object sHookLock = new Object();
 
@@ -101,7 +105,7 @@ public class AlterCore {
             Method backupMethod = buildBackup(executable);
             Hooks.hook(backupMethod, executable, Hooks.EntryPointType.DIRECT);
 
-            long artMethod = Reflection.getArtMethod(backupMethod);
+            long artMethod = getArtMethod(backupMethod);
             HookRecord hookRecord;
             boolean newMethod = false;
 
@@ -297,7 +301,7 @@ public class AlterCore {
                 .withFlags(ACC_PUBLIC)
                 .withMethod(mb -> mb
                         .of(backupMethodId)
-                        .withFlags(isStatic ? (ACC_PUBLIC | ACC_STATIC) : ACC_PUBLIC)
+                        .withFlags( (ACC_PUBLIC | ACC_STATIC))
                         .withCode(2, ib -> {
                             if (isConstructor || methodType.returnType() == void.class) {
                                 // Constructors (and void methods) just return.
@@ -330,4 +334,118 @@ public class AlterCore {
             Log.i(TAG, String.format(fmt, args));
         }
     }
+
+    public static void deoptimize(Executable ex){
+        Hooks.deoptimize(ex);
+    }
+
+    /**
+     * Invokes the original implementation of the given method or constructor, bypassing
+     * any active hook so the un-hooked behavior can still be observed from within a
+     * callback (e.g. to call through to the real implementation).
+     * <p>
+     * If the target is not currently hooked, this falls back to a direct
+     * {@link Method#invoke} / {@link Constructor#newInstance} call. That fallback has a
+     * known race: if another thread installs a hook on the same target between the
+     * lookup above and the actual invocation, the call will go through the newly
+     * installed hook instead of the original implementation. Do not rely on this
+     * fallback behavior being un-hooked.
+     *
+     * @param method     the method or constructor whose original implementation should run
+     * @param thisObject the receiver, or {@code null} for static methods / constructors
+     * @param args       the arguments for the call
+     * @return the result of the original call ({@code null} for constructors)
+     * @throws NullPointerException       if {@code method} is {@code null}
+     * @throws IllegalAccessException     should never happen, since accessibility is forced
+     * @throws InvocationTargetException  if the underlying call throws
+     * @throws IllegalArgumentException   if the arguments don't match the target's signature,
+     *                                    or a non-null receiver is given for an un-hooked constructor
+     */
+    public static Object invokeOriginalMethod(Member method, Object thisObject, Object... args)
+            throws IllegalAccessException, InvocationTargetException {
+
+        if (method == null) throw new NullPointerException("method == null");
+        if (method instanceof Method) {
+            ((Method) method).setAccessible(true);
+        } else if (method instanceof Constructor) {
+            ((Constructor<?>) method).setAccessible(true);
+        } else {
+            throw new IllegalArgumentException("method must be of type Method or Constructor");
+        }
+
+        HookRecord hookRecord = sHookRecords.get(Reflection.getArtMethod((Executable) method));
+        if (hookRecord == null) {
+            if (AlterConfig.isDebug) {
+                Log.w(TAG, "Attempting to invoke the original implementation of a method that is "
+                                + "not hooked: " + method + ". This falls back to a direct call; if another "
+                                + "thread hooks this method concurrently, the call may go through the "
+                                + "newly installed hook instead of the real implementation.",
+                        new Throwable("here"));
+            }
+            if (method instanceof Constructor) {
+                if (thisObject != null) {
+                    throw new IllegalArgumentException(
+                            "Cannot invoke a not-hooked Constructor with a non-null receiver");
+                }
+                try {
+                    return ((Constructor<?>) method).newInstance(args);
+                } catch (InstantiationException e) {
+                    throw new IllegalArgumentException("Invalid constructor: " + method, e);
+                }
+            } else {
+                return ((Method) method).invoke(thisObject, args);
+            }
+        }
+
+        // Unlike Pine, AlterCore builds the backup synchronously inside hook() and
+        // publishes the HookRecord to sHookRecords only after `backup` is assigned
+        // (see AlterCore.hook()). This branch should therefore be unreachable; it is
+        // kept only as an explicit guard so a broken invariant fails loudly instead
+        // of silently misbehaving.
+        if (hookRecord.backup == null) {
+            throw new IllegalStateException(
+                    "hookRecord.backup is null for " + method + ". A HookRecord must never be "
+                            + "published before its backup method is assigned.");
+        }
+
+        return callBackupMethod(hookRecord, thisObject, args);
+    }
+
+    /**
+     * Invokes the generated backup method that carries the original implementation of
+     * {@code hookRecord.target}.
+     * <p>
+     * The backup method is always a static trampoline (see {@link #buildBackup}): for
+     * non-static targets the receiver is passed as the first element of the argument
+     * array rather than as the reflective receiver, since the backup's declaring class
+     * (a synthetic "$Backup" class) is unrelated to the original's declaring class and
+     * would fail ART's receiver-type check otherwise.
+     *
+     * @param hookRecord the hook record describing the target and its backup
+     * @param thisObject the receiver for non-static targets, ignored for static targets
+     * @param args       the arguments for the call
+     * @return the result of the original call
+     */
+    public static Object callBackupMethod(HookRecord hookRecord, Object thisObject, Object[] args)
+            throws InvocationTargetException, IllegalAccessException {
+        // java.lang.Class objects are movable and may cause crashes when invoking the backup
+        // method; native JNI entry points can also be changed by RegisterNatives/
+        // UnregisterNatives, so keep a reference alive across the call.
+        Member origin = hookRecord.target;
+        Method backup = hookRecord.backup;
+        Class<?> declaring = origin.getDeclaringClass();
+
+        // FIXME: a args error
+        Object[] backupArgs = hookRecord.isStatic ? args : addFirst(args, thisObject);
+
+        // FIXME: a GC happening exactly here (try Runtime.getRuntime().gc() to reproduce)
+        // can crash the backup call; see the FIXME on the original Pine implementation.
+        Object result = backup.invoke(null, backupArgs);
+
+        // Explicit use of declaring_class to keep a reference on the stack and avoid it
+        // being moved/collected by a concurrent GC while `backup` is executing.
+        declaring.getClass();
+        return result;
+    }
+
 }
