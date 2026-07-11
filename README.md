@@ -18,18 +18,34 @@ Please note that this project is currently under active development – its API 
 ### Basic Usage
 [![Download](https://img.shields.io/maven-central/v/io.github.answer2.altercore/core.svg)](https://repo1.maven.org/maven2/io/github/answer2/altercore/core/)
 
-Add dependencies in build.gradle:
+Groovy
 ```groovy
 dependencies {
     implementation 'io.github.answer2.altercore:core:<version>'
 }
 ```
 
-Add dependencies in build.gradle.kts:
+Kotlin
 ```groovy
 dependencies {
     implementation("io.github.answer2.altercore:core:<version>")
 }
+```
+
+### Xposed Support
+[![Download](https://img.shields.io/maven-central/v/io.github.answer2.altercore/xposed.svg)](https://repo1.maven.org/maven2/io/github/answer2/altercore/xposed/)
+
+We supports hooking methods in Xposed-style and loading Xposed modules at now
+(Only java method hooking is supported. Modules using unsupported features like Resource-hooking won't work.)
+
+Groovy
+```groovy
+implementation 'io.github.answer2.altercore:xposed:<version>'
+```
+
+Kotlin:
+```groovy
+implementation("io.github.answer2.altercore:xposed:<version>")
 ```
 
 ## Quick Start

@@ -60,7 +60,7 @@ mavenPublishing {
     coordinates(
         groupId = "io.github.answer2.altercore",
         artifactId = "core",
-        version = "1.0.4"
+        version = "1.0.5"
     )
 
     // POM 信息（必须填写完整）
