@@ -27,19 +27,25 @@ import dev.answer.altercore.core.HookParams;
 
 public class TestHook {
 
+    private String mText = null;
+
     private static final String TAG = "TestHook";
 
-    public String a(String aaa, String aab) {
-        return "a" + aaa + aab;
+    public String a(String arg1) {
+        return "args" + arg1;
     }
 
     public static String b() {
         return "origin b";
     }
 
+    public TestHook(String arg1){
+        mText = arg1;
+    }
+
     public static void test() {
         try {
-            Method a_method = TestHook.class.getMethod("a", String.class, String.class);
+            Method a_method = TestHook.class.getMethod("a", String.class);
             Method b_method = TestHook.class.getMethod("b");
 
             MethodHook.Unhook un = AlterCore.hook(a_method, new MethodHook() {
@@ -63,13 +69,13 @@ public class TestHook {
                 }
             });
 
-            var test = new TestHook();
+            var test = new TestHook("Test");
 
-            Log.d(TAG,"Hook : " +  test.a(" Hello", "114514"));
+            Log.d(TAG,"Hook : " +  test.a(" Hello"));
 
             un.unhook();
 
-            Log.d(TAG,"Origin : " +  test.a(" Hello", "114514"));
+            Log.d(TAG,"Origin : " +  test.a(" Hello"));
 
 
             Log.d(TAG,"Hook : " +  b());
@@ -77,6 +83,25 @@ public class TestHook {
             un_.unhook();
 
             Log.d(TAG,"Origin : " +  b());
+
+            var constructor = TestHook.class.getConstructor(String.class);
+
+            var test1 = new TestHook("Test");
+
+            Log.d(TAG,"Origin : " +  test1.mText);
+
+            AlterCore.hook(constructor, new MethodHook(){
+                @Override
+                public void before(HookParams params) throws Throwable {
+                    super.before(params);
+                    params.args[0] = "Hook Success!";
+                }
+            });
+
+            var test2 = new TestHook("Test");
+
+            Log.d(TAG,"Hook : " +  test2.mText);
+
 
         } catch (NoSuchMethodException e) {
             e.printStackTrace();

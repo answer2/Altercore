@@ -17,6 +17,7 @@
 package dev.answer.altercore;
 
 import static com.v7878.dex.DexConstants.ACC_PUBLIC;
+import static com.v7878.dex.DexConstants.ACC_STATIC;
 import static dev.answer.altercore.utils._Utils.rawMethodTypeOf;
 
 import android.util.Log;
@@ -49,9 +50,6 @@ import dev.answer.altercore.callback.MethodHook;
 import dev.answer.altercore.core.HookParams;
 import dev.answer.altercore.core.HookRecord;
 
-/**
- * Core hooking engine that manages method interception and backup generation.
- */
 public class AlterCore {
 
     private static final String TAG = "AlterCore";
@@ -81,6 +79,10 @@ public class AlterCore {
 
             int modifiers = executable.getModifiers();
             boolean isStatic = Modifier.isStatic(modifiers);
+            boolean isConstructor = executable instanceof Constructor;
+
+            // Return type: always void for constructors, the real return type for methods.
+            Class<?> returnType = isConstructor ? void.class : ((Method) executable).getReturnType();
 
             if (executable instanceof Method) {
                 if (Modifier.isAbstract(modifiers)) {
@@ -103,17 +105,23 @@ public class AlterCore {
             HookRecord hookRecord;
             boolean newMethod = false;
 
+            // Set isStatic / backup while still holding the lock, so no thread can ever
+            // observe a partially-initialized HookRecord through sHookRecords.
             synchronized (sHookLock) {
                 hookRecord = sHookRecords.get(artMethod);
                 if (hookRecord == null) {
                     newMethod = true;
                     hookRecord = new HookRecord(executable, artMethod);
+                    hookRecord.isStatic = isStatic;
+                    hookRecord.backup = backupMethod;
                     sHookRecords.put(artMethod, hookRecord);
+                } else {
+                    // Update the existing record inside the lock too, to avoid racing
+                    // with concurrent readers of sHookRecords.
+                    hookRecord.isStatic = isStatic;
+                    hookRecord.backup = backupMethod;
                 }
             }
-
-            hookRecord.isStatic = isStatic;
-            hookRecord.backup = backupMethod;
 
             HookRecord finalHookRecord = hookRecord;
             HookTransformer hookTransformer = new HookTransformer() {
@@ -122,8 +130,16 @@ public class AlterCore {
                     EmulatedStackFrame.StackFrameAccessor accessor = frame.accessor();
                     Object[] frameRefs = frame.references();
 
+                    // NOTE: assumes frameRefs is laid out as [this?, arg1, arg2, ...(return
+                    // slot only present when the return type is a reference type)]. When
+                    // returnType is primitive, the return value does not occupy a slot in
+                    // the references array, so it must not be trimmed with -1 in that case.
+                    // Verify this assumption against the actual EmulatedStackFrame layout.
+                    boolean returnSlotIsReference = !returnType.isPrimitive();
+                    int argsEnd = frameRefs.length - (returnSlotIsReference ? 1 : 0);
+
                     Object thisObject = isStatic ? null : frameRefs[0];
-                    Object[] argsData = Arrays.copyOfRange(frameRefs, isStatic ? 0 : 1, frameRefs.length - 1);
+                    Object[] argsData = Arrays.copyOfRange(frameRefs, isStatic ? 0 : 1, argsEnd);
 
                     HookParams params = new HookParams(finalHookRecord, thisObject, argsData);
 
@@ -136,6 +152,14 @@ public class AlterCore {
                         params.setThrowable(e);
                     }
 
+                    // returnEarly is not allowed for constructors: skipping the original
+                    // call would leave `this` uninitialized, and any later use of that
+                    // object could crash or behave incorrectly.
+                    if (isConstructor && params.returnEarly) {
+                        Log.w(TAG, "returnEarly is not supported for constructors, ignoring: " + executable);
+                        params.returnEarly = false;
+                    }
+
                     Object[] methodArgs = isStatic ? params.args : addFirst(params.args, params.thisObject);
 
                     Object originalResult = null;
@@ -143,7 +167,10 @@ public class AlterCore {
                         try {
                             originalResult = original.invokeWithArguments(methodArgs);
                             params.setResult(originalResult);
-                        } catch (Exception e) {
+                        } catch (Throwable e) {
+                            // invokeWithArguments can throw Throwable (e.g. Error), not just
+                            // Exception, so catch broadly here; otherwise an Error would skip
+                            // callback.after() entirely.
                             params.setThrowable(e);
                         }
                     }
@@ -156,8 +183,11 @@ public class AlterCore {
                         params.setThrowable(e);
                     }
 
-                    if (params.getResult() != originalResult) {
-                        accessor.setReference(EmulatedStackFrame.RETURN_VALUE_IDX, params.getResult());
+                    // Constructors have no writable return slot (they are effectively void),
+                    // so even if a callback mistakenly sets a result, it must not be written
+                    // back into the stack frame.
+                    if (!isConstructor && params.getResult() != originalResult) {
+                        writeReturnValue(accessor, returnType, params.getResult());
                     }
                 }
             };
@@ -166,10 +196,48 @@ public class AlterCore {
                     hookTransformer, Hooks.EntryPointType.DIRECT);
 
             return callback.new Unhook(hookRecord);
-        } catch (Exception e) {
-            e.printStackTrace();
+        } catch (Throwable e) {
+            // Previously this only caught Exception and silently printed the stack trace.
+            // Log the full failure here so callers can tell whether buildBackup, Hooks.hook,
+            // or something else failed.
+            Log.e(TAG, "Failed to hook " + executable, e);
         }
         return null;
+    }
+
+    /**
+     * Writes the hook result back into the stack frame according to the executable's
+     * actual return type. Using {@code setReference} unconditionally is wrong for
+     * primitive return types (int/long/boolean/float/double/...), as it can corrupt
+     * the emulated stack frame.
+     *
+     * @param accessor   the stack frame accessor to write into
+     * @param returnType the executable's declared return type
+     * @param result     the value to write back
+     */
+    private static void writeReturnValue(EmulatedStackFrame.StackFrameAccessor accessor,
+                                         Class<?> returnType, Object result) {
+        if (returnType == void.class) {
+            return;
+        } else if (returnType == boolean.class) {
+            accessor.setBoolean(EmulatedStackFrame.RETURN_VALUE_IDX, (Boolean) result);
+        } else if (returnType == byte.class) {
+            accessor.setByte(EmulatedStackFrame.RETURN_VALUE_IDX, (Byte) result);
+        } else if (returnType == char.class) {
+            accessor.setChar(EmulatedStackFrame.RETURN_VALUE_IDX, (Character) result);
+        } else if (returnType == short.class) {
+            accessor.setShort(EmulatedStackFrame.RETURN_VALUE_IDX, (Short) result);
+        } else if (returnType == int.class) {
+            accessor.setInt(EmulatedStackFrame.RETURN_VALUE_IDX, (Integer) result);
+        } else if (returnType == long.class) {
+            accessor.setLong(EmulatedStackFrame.RETURN_VALUE_IDX, (Long) result);
+        } else if (returnType == float.class) {
+            accessor.setFloat(EmulatedStackFrame.RETURN_VALUE_IDX, (Float) result);
+        } else if (returnType == double.class) {
+            accessor.setDouble(EmulatedStackFrame.RETURN_VALUE_IDX, (Double) result);
+        } else {
+            accessor.setReference(EmulatedStackFrame.RETURN_VALUE_IDX, result);
+        }
     }
 
     /**
@@ -181,7 +249,7 @@ public class AlterCore {
      * @param element the element to prepend
      * @return a new array with the element inserted at index 0
      */
-    public static Object[] addFirst(Object[] arr, Object element) {
+    private static Object[] addFirst(Object[] arr, Object element) {
         if (arr == null) {
             return new Object[]{element};
         }
@@ -193,35 +261,52 @@ public class AlterCore {
 
     /**
      * Builds a backup method that will be used as the replacement target when hooking.
-     * The backup class is dynamically generated with a minimal method that returns null/0,
+     * The backup class is dynamically generated with a minimal method that returns null/0/void,
      * and is loaded via a new {@link ClassLoader}.
+     * <p>
+     * Supports both {@link Method} and {@link Constructor}. Since a constructor's
+     * {@link Executable#getName()} returns the fully-qualified class name (which is not a
+     * valid, non-constructor dex method name), a synthetic name is used instead. The generated
+     * backup for a constructor is an ordinary instance method (not flagged {@code ACC_CONSTRUCTOR})
+     * with a {@code void} return, matching the constructor's calling shape.
      *
      * @param executable the original method or constructor
      * @return the backup {@link Method} instance
      * @throws NoSuchMethodException if the backup method cannot be found in the generated class
      */
-    public static Method buildBackup(Executable executable) throws NoSuchMethodException {
+    private static Method buildBackup(Executable executable) throws NoSuchMethodException {
+        boolean isConstructor = executable instanceof Constructor;
         boolean isStatic = Modifier.isStatic(executable.getModifiers());
-        MethodType methodType = rawMethodTypeOf(executable);
+        MethodType methodType = rawMethodTypeOf(executable); // constructor -> return type is void
 
         ProtoId protoId = ProtoId.of(methodType);
 
         String originName = executable.getDeclaringClass().getName();
         String backupName = originName + "$Backup";
+
+        // Constructor#getName() returns the FQCN, which is not usable as a plain
+        // (non-<init>) dex method name, so constructors get a distinct synthetic name.
+        String backupMethodName = isConstructor ? "backupInit" : executable.getName();
+
         TypeId backupId = TypeId.ofName(backupName);
         TypeId backupOriginId = TypeId.ofName(originName);
-        MethodId backupMethodId = MethodId.of(backupId, executable.getName(), protoId);
+        MethodId backupMethodId = MethodId.of(backupId, backupMethodName, protoId);
 
         ClassDef backupDef = ClassBuilder.build(backupId, cb -> cb
                 .withSuperClass(TypeId.OBJECT)
                 .withFlags(ACC_PUBLIC)
                 .withMethod(mb -> mb
                         .of(backupMethodId)
-                        .withFlags(ACC_PUBLIC)
-                        .withCode(2, ib -> ib
-                                .const_(ib.v(0), 0)      // load null into register v0
-                                .return_object(ib.v(0))   // return null
-                        )
+                        .withFlags(isStatic ? (ACC_PUBLIC | ACC_STATIC) : ACC_PUBLIC)
+                        .withCode(2, ib -> {
+                            if (isConstructor || methodType.returnType() == void.class) {
+                                // Constructors (and void methods) just return.
+                                ib.return_void();
+                            } else {
+                                ib.const_(ib.v(0), 0)
+                                        .return_object(ib.v(0));
+                            }
+                        })
                 )
         );
 
@@ -231,7 +316,7 @@ public class AlterCore {
         );
 
         Class<?> backupClass = ClassUtils.forName(backupName, loader);
-        return backupClass.getDeclaredMethod(executable.getName(), methodType.parameterArray());
+        return backupClass.getDeclaredMethod(backupMethodName, methodType.parameterArray());
     }
 
     /**
@@ -240,7 +325,7 @@ public class AlterCore {
      * @param fmt  the format string (as in {@link String#format})
      * @param args the arguments referenced by the format specifiers
      */
-    public static void print(String fmt, Object... args) {
+    private static void print(String fmt, Object... args) {
         if (AlterConfig.isDebug) {
             Log.i(TAG, String.format(fmt, args));
         }
