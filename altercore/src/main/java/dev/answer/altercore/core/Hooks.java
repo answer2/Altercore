@@ -39,10 +39,6 @@ import static com.v7878.unsafe.Reflection.getDeclaredMethod;
 import static com.v7878.unsafe.Reflection.unreflect;
 import static dev.answer.altercore.utils._Utils.rawMethodTypeOf;
 
-import android.os.Build;
-
-import androidx.annotation.RequiresApi;
-
 import com.v7878.dex.DexIO;
 import com.v7878.dex.builder.ClassBuilder;
 import com.v7878.dex.immutable.ClassDef;

@@ -31,10 +31,6 @@ import static com.v7878.dex.DexConstants.ACC_PUBLIC;
 import static com.v7878.unsafe.ArtMethodUtils.getExecutableEntryPoint;
 import static com.v7878.unsafe.Reflection.getDeclaredMethod;
 
-import android.os.Build;
-
-import androidx.annotation.RequiresApi;
-
 import com.v7878.dex.DexIO;
 import com.v7878.dex.builder.ClassBuilder;
 import com.v7878.dex.immutable.ClassDef;
