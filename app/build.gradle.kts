@@ -37,6 +37,7 @@ android {
 
 dependencies {
     implementation(project(":altercore"))
+    implementation(project(":xposed"))
 
     implementation(libs.androidx.appcompat)
     implementation(libs.material)

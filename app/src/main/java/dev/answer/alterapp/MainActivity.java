@@ -43,7 +43,7 @@ public class MainActivity extends AppCompatActivity {
     private static final int COLOR_FAIL_BG = Color.parseColor("#FFEBEE");
     private static final int COLOR_STAGE_BG = Color.parseColor("#F5F5F5");
     private static final int COLOR_ARROW = Color.parseColor("#9E9E9E");
-
+    private static final int COLOR_SECTION = Color.parseColor("#37474F");
     private LinearLayout resultsContainer;
     private TextView summaryView;
 
@@ -100,18 +100,55 @@ public class MainActivity extends AppCompatActivity {
     private void runAndRenderTests() {
         resultsContainer.removeAllViews();
 
-        List<TestResult> results = TestHook.runTests();
+        List<TestResult> hookResults = TestHook.runTests();
+        List<TestResult> invokeOriginalResults = TestInvokeOriginal.runTests();
+        List<TestResult> xposedResults = TestXposed.runTests();
+
+        int total = hookResults.size() + invokeOriginalResults.size() + xposedResults.size();
+        int passed = 0;
+
+        passed += renderSection("Basic Hooking (AlterCore)", hookResults);
+        passed += renderSection("Call-Original Capability (AlterCore)", invokeOriginalResults);
+        passed += renderSection("Real Xposed API (XposedBridge)", xposedResults);
+
+        boolean allPassed = passed == total;
+        summaryView.setText(passed + " / " + total + " test cases passed");
+        summaryView.setTextColor(allPassed ? COLOR_PASS : COLOR_FAIL);
+        summaryView.setTypeface(Typeface.DEFAULT_BOLD);
+    }
+
+
+    /**
+     * Renders a titled section followed by one card per result. Returns the number of
+     * passed results in this section, so the caller can accumulate an overall total.
+     */
+    private int renderSection(String title, List<TestResult> results) {
+        resultsContainer.addView(buildSectionHeader(title));
 
         int passed = 0;
         for (TestResult result : results) {
             if (result.passed) passed++;
             resultsContainer.addView(buildResultCard(result));
         }
+        return passed;
+    }
 
-        boolean allPassed = passed == results.size();
-        summaryView.setText(passed + " / " + results.size() + " test cases passed");
-        summaryView.setTextColor(allPassed ? COLOR_PASS : COLOR_FAIL);
-        summaryView.setTypeface(Typeface.DEFAULT_BOLD);
+    private View buildSectionHeader(String title) {
+        Context ctx = this;
+
+        TextView header = new TextView(ctx);
+        header.setText(title);
+        header.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        header.setTypeface(Typeface.DEFAULT_BOLD);
+        header.setTextColor(COLOR_SECTION);
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.topMargin = dp(8);
+        params.bottomMargin = dp(8);
+        header.setLayoutParams(params);
+
+        return header;
     }
 
     /**

@@ -105,7 +105,7 @@ public class AlterCore {
             Method backupMethod = buildBackup(executable);
             Hooks.hook(backupMethod, executable, Hooks.EntryPointType.DIRECT);
 
-            long artMethod = getArtMethod(backupMethod);
+            long artMethod = getArtMethod(executable);
             HookRecord hookRecord;
             boolean newMethod = false;
 
@@ -132,18 +132,22 @@ public class AlterCore {
                 @Override
                 public void transform(MethodHandle original, EmulatedStackFrame frame) throws Throwable {
                     EmulatedStackFrame.StackFrameAccessor accessor = frame.accessor();
-                    Object[] frameRefs = frame.references();
 
-                    // NOTE: assumes frameRefs is laid out as [this?, arg1, arg2, ...(return
-                    // slot only present when the return type is a reference type)]. When
-                    // returnType is primitive, the return value does not occupy a slot in
-                    // the references array, so it must not be trimmed with -1 in that case.
-                    // Verify this assumption against the actual EmulatedStackFrame layout.
-                    boolean returnSlotIsReference = !returnType.isPrimitive();
-                    int argsEnd = frameRefs.length - (returnSlotIsReference ? 1 : 0);
+                    // Walk original.type()'s parameters and read each one with the accessor method
+                    // matching its actual type, instead of slicing frame.references() (which silently
+                    // drops primitive parameters — see readArgumentAt()).
+                    Class<?>[] paramTypes = original.type().parameterArray();
+                    int paramCount = paramTypes.length;
+                    int argsStart = isStatic ? 0 : 1;
 
-                    Object thisObject = isStatic ? null : frameRefs[0];
-                    Object[] argsData = Arrays.copyOfRange(frameRefs, isStatic ? 0 : 1, argsEnd);
+                    Object thisObject = isStatic ? null : readArgumentAt(accessor, paramTypes[0], 0);
+
+                    Object[] argsData = paramCount == argsStart
+                            ? EMPTY_OBJECT_ARRAY
+                            : new Object[paramCount - argsStart];
+                    for (int i = argsStart; i < paramCount; i++) {
+                        argsData[i - argsStart] = readArgumentAt(accessor, paramTypes[i], i);
+                    }
 
                     HookParams params = new HookParams(finalHookRecord, thisObject, argsData);
 
@@ -156,9 +160,6 @@ public class AlterCore {
                         params.setThrowable(e);
                     }
 
-                    // returnEarly is not allowed for constructors: skipping the original
-                    // call would leave `this` uninitialized, and any later use of that
-                    // object could crash or behave incorrectly.
                     if (isConstructor && params.returnEarly) {
                         Log.w(TAG, "returnEarly is not supported for constructors, ignoring: " + executable);
                         params.returnEarly = false;
@@ -172,9 +173,6 @@ public class AlterCore {
                             originalResult = original.invokeWithArguments(methodArgs);
                             params.setResult(originalResult);
                         } catch (Throwable e) {
-                            // invokeWithArguments can throw Throwable (e.g. Error), not just
-                            // Exception, so catch broadly here; otherwise an Error would skip
-                            // callback.after() entirely.
                             params.setThrowable(e);
                         }
                     }
@@ -187,9 +185,6 @@ public class AlterCore {
                         params.setThrowable(e);
                     }
 
-                    // Constructors have no writable return slot (they are effectively void),
-                    // so even if a callback mistakenly sets a result, it must not be written
-                    // back into the stack frame.
                     if (!isConstructor && params.getResult() != originalResult) {
                         writeReturnValue(accessor, returnType, params.getResult());
                     }
@@ -241,6 +236,47 @@ public class AlterCore {
             accessor.setDouble(EmulatedStackFrame.RETURN_VALUE_IDX, (Double) result);
         } else {
             accessor.setReference(EmulatedStackFrame.RETURN_VALUE_IDX, result);
+        }
+    }
+
+    /**
+     * Reads a single argument out of the stack frame using the accessor method that
+     * matches its declared type.
+     * <p>
+     * {@code frame.references()} only contains the frame's reference-type slots
+     * (receiver, reference parameters, and a reference return slot if applicable) —
+     * primitive parameters (int/long/boolean/...) are stored elsewhere and never show
+     * up in it. Building args by slicing {@code references()} silently drops every
+     * primitive argument, which is why reads must be dispatched by the parameter's
+     * actual type instead.
+     *
+     * @param accessor  the stack frame accessor to read from
+     * @param paramType the declared type of the parameter at {@code index}
+     * @param index     the parameter's position within the frame's MethodType
+     * @return the (boxed, if primitive) argument value
+     */
+    private static Object readArgumentAt(EmulatedStackFrame.StackFrameAccessor accessor,
+                                         Class<?> paramType, int index) {
+        if (!paramType.isPrimitive()) {
+            return accessor.getReference(index);
+        } else if (paramType == boolean.class) {
+            return accessor.getBoolean(index);
+        } else if (paramType == byte.class) {
+            return accessor.getByte(index);
+        } else if (paramType == char.class) {
+            return accessor.getChar(index);
+        } else if (paramType == short.class) {
+            return accessor.getShort(index);
+        } else if (paramType == int.class) {
+            return accessor.getInt(index);
+        } else if (paramType == long.class) {
+            return accessor.getLong(index);
+        } else if (paramType == float.class) {
+            return accessor.getFloat(index);
+        } else if (paramType == double.class) {
+            return accessor.getDouble(index);
+        } else {
+            throw new IllegalArgumentException("Unsupported parameter type: " + paramType);
         }
     }
 

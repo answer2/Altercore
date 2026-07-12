@@ -49,29 +49,64 @@ public final class XposedBridge {
 	public static int XPOSED_BRIDGE_VERSION = 90;
 
 	// built-in handlers
-	private static final Map<Member, CopyOnWriteSortedSet<XC_MethodHook>> sHookedMethodCallbacks = new HashMap<>();
+	private static final Map<Member, HookState> sHookedMethodCallbacks = new HashMap<>();
 
 	// Pine changed: Move sLoadedPackageCallbacks to PineXposed.
 	// /*package*/ static final CopyOnWriteSortedSet<XC_LoadPackage> sLoadedPackageCallbacks = new CopyOnWriteSortedSet<>();
 
-	private static HookProvider hookProvider = HookProvider.PINE;
+	private static HookProvider hookProvider = HookProvider.ALTER;
+
+	/**
+	 * Per-Member hook bookkeeping: the set of Xposed callbacks currently registered, and
+	 * (if any) the handle to the currently-installed native hook. {@code nativeUnhook} being
+	 * {@code null} means no native hook is active for this Member right now — either it was
+	 * never installed, or it was fully removed after the last callback was unhooked. This
+	 * lets {@link #hookMethod} correctly reinstall the native hook on re-hook, instead of
+	 * assuming "this Member has an entry in the map" implies "it's actively hooked".
+	 */
+	private static final class HookState {
+		final CopyOnWriteSortedSet<XC_MethodHook> callbacks = new CopyOnWriteSortedSet<>();
+		// Guarded by sHookedMethodCallbacks's monitor.
+		NativeUnhook nativeUnhook;
+	}
 
 	public interface HookProvider {
-		HookProvider PINE = new HookProvider() {
+		HookProvider ALTER = new HookProvider() {
 			@Override
-			public void hook(Member method, CopyOnWriteSortedSet<XC_MethodHook> callbacks) {
+			public NativeUnhook hook(Member method, CopyOnWriteSortedSet<XC_MethodHook> callbacks) {
 				Handler handler = new Handler(callbacks);
-				AlterCore.hook((Executable) method, handler);
+				MethodHook.Unhook unhook = AlterCore.hook((Executable) method, handler);
+				// AlterCore.hook() returns null on failure (see AlterCore's own error handling);
+				// propagate that as "no native hook was actually installed" rather than
+				// wrapping a null reference in a NativeUnhook that would NPE on use.
+				return unhook == null ? null : unhook::unhook;
 			}
 
 			@Override
-			public Object invokeOriginal(Member method, Object thisObject, Object[] args) throws NullPointerException, IllegalAccessException, IllegalArgumentException, InvocationTargetException {
+			public Object invokeOriginal(Member method, Object thisObject, Object[] args) throws
+					NullPointerException, IllegalAccessException, IllegalArgumentException, InvocationTargetException {
 				return AlterCore.invokeOriginalMethod(method, thisObject, args);
 			}
 		};
-		void hook(Member method, CopyOnWriteSortedSet<XC_MethodHook> callbacks);
+
+		/**
+		 * Installs the native-level hook for {@code method}. Returns a handle that can later
+		 * be used to fully remove that native hook, or {@code null} if installation failed.
+		 */
+		NativeUnhook hook(Member method, CopyOnWriteSortedSet<XC_MethodHook> callbacks);
+
 		Object invokeOriginal(Member method, Object thisObject, Object[] args) throws
 				NullPointerException, IllegalAccessException, IllegalArgumentException, InvocationTargetException;
+	}
+
+	/**
+	 * A handle to a native-level hook installation, distinct from the Xposed-level
+	 * {@link XC_MethodHook.Unhook} that a module holds. Removing the last Xposed callback for
+	 * a method should also remove the native hook via this handle, and re-hooking the same
+	 * method afterward must reinstall a new one — see {@link #hookMethod} / {@link #unhookMethod}.
+	 */
+	public interface NativeUnhook {
+		void unhook();
 	}
 
 	private XposedBridge() {}
@@ -163,28 +198,34 @@ public final class XposedBridge {
 	public static XC_MethodHook.Unhook hookMethod(Member hookMethod, XC_MethodHook callback) {
 		if (!(hookMethod instanceof Method) && !(hookMethod instanceof Constructor<?>)) {
 			throw new IllegalArgumentException("Only methods and constructors can be hooked: " + hookMethod.toString());
-		}
-		// Pine changed: We can hook interfaces' non-abstract methods
-		/*else if (hookMethod.getDeclaringClass().isInterface()) {
-			throw new IllegalArgumentException("Cannot hook interfaces: " + hookMethod.toString());
-		}*/ else if (Modifier.isAbstract(hookMethod.getModifiers())) {
+		} else if (Modifier.isAbstract(hookMethod.getModifiers())) {
 			throw new IllegalArgumentException("Cannot hook abstract methods: " + hookMethod.toString());
 		}
 
-		boolean newMethod = false;
-		CopyOnWriteSortedSet<XC_MethodHook> callbacks;
+		HookState state;
+		boolean needsInstall;
 		synchronized (sHookedMethodCallbacks) {
-			callbacks = sHookedMethodCallbacks.get(hookMethod);
-			if (callbacks == null) {
-				callbacks = new CopyOnWriteSortedSet<>();
-				sHookedMethodCallbacks.put(hookMethod, callbacks);
-				newMethod = true;
+			state = sHookedMethodCallbacks.get(hookMethod);
+			if (state == null) {
+				state = new HookState();
+				sHookedMethodCallbacks.put(hookMethod, state);
 			}
+			state.callbacks.add(callback);
+			// Install whenever there is currently no active native hook for this Member —
+			// covers both "never hooked before" and "was fully unhooked and is being
+			// re-hooked now", not just "first time we've ever seen this Member".
+			needsInstall = state.nativeUnhook == null;
 		}
-		callbacks.add(callback);
 
-		if (newMethod) {
-			hookProvider.hook(hookMethod, callbacks);
+		if (needsInstall) {
+			NativeUnhook installed = hookProvider.hook(hookMethod, state.callbacks);
+			synchronized (sHookedMethodCallbacks) {
+				// Only assign if still expected to be null: a concurrent unhookMethod() could
+				// have already raced in here and cleared it back out again in between.
+				if (state.nativeUnhook == null) {
+					state.nativeUnhook = installed;
+				}
+			}
 		}
 
 		return callback.new Unhook(hookMethod);
@@ -201,13 +242,29 @@ public final class XposedBridge {
 	 */
 	@Deprecated
 	public static void unhookMethod(Member hookMethod, XC_MethodHook callback) {
-		CopyOnWriteSortedSet<XC_MethodHook> callbacks;
+		HookState state;
 		synchronized (sHookedMethodCallbacks) {
-			callbacks = sHookedMethodCallbacks.get(hookMethod);
-			if (callbacks == null)
-				return;
+			state = sHookedMethodCallbacks.get(hookMethod);
+			if (state == null) return;
 		}
-		callbacks.remove(callback);
+
+		state.callbacks.remove(callback);
+
+		if (state.callbacks.getSnapshot().length == 0) {
+			NativeUnhook toRemove = null;
+			synchronized (sHookedMethodCallbacks) {
+				// Re-check under lock: another thread may have already added a new callback
+				// (and thus expects the native hook to stay installed) right after our
+				// remove() above but before we got here.
+				if (state.callbacks.getSnapshot().length == 0 && state.nativeUnhook != null) {
+					toRemove = state.nativeUnhook;
+					state.nativeUnhook = null;
+				}
+			}
+			if (toRemove != null) {
+				toRemove.unhook();
+			}
+		}
 	}
 
 	/**
