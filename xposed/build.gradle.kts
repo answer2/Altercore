@@ -49,7 +49,7 @@ mavenPublishing {
     coordinates(
         groupId = "io.github.answer2.altercore",
         artifactId = "xposed",
-        version = "0.0.1"
+        version = "0.0.2"
     )
 
     // POM 信息（必须填写完整）
