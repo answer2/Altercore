@@ -19,6 +19,7 @@ package dev.answer.altercore;
 import static com.v7878.dex.DexConstants.ACC_PUBLIC;
 import static com.v7878.dex.DexConstants.ACC_STATIC;
 import static com.v7878.unsafe.Reflection.getArtMethod;
+import static dev.answer.altercore.AlterConfig.isDebug;
 import static dev.answer.altercore.utils._Utils.rawMethodTypeOf;
 
 import android.util.Log;
@@ -34,6 +35,10 @@ import com.v7878.unsafe.ClassUtils;
 import com.v7878.unsafe.Reflection;
 import com.v7878.unsafe.invoke.EmulatedStackFrame;
 
+import dev.answer.altercore.callback.AfterCallback;
+import dev.answer.altercore.callback.BeforeCallback;
+import dev.answer.altercore.callback.MethodReplacement;
+import dev.answer.altercore.callback.ReplaceCallback;
 import dev.answer.altercore.core.HookTransformer;
 import dev.answer.altercore.core.Hooks;
 
@@ -45,7 +50,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Member;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -54,11 +59,127 @@ import dev.answer.altercore.core.HookParams;
 import dev.answer.altercore.core.HookRecord;
 
 public class AlterCore {
-
     private static final String TAG = "AlterCore";
     public static final Object[] EMPTY_OBJECT_ARRAY = new Object[0];
     private static final Map<Long, HookRecord> sHookRecords = new ConcurrentHashMap<>();
     private static final Object sHookLock = new Object();
+
+    // Maps to store method information, hooks, and replacements
+    private static final Map<Member, HookData> methodMaps = new HashMap<>();
+    private static final Map<Member, HookCallback> hookMaps = new HashMap<>();
+    private static final Map<Member, ReplacementCallback> replaceMaps = new HashMap<>();
+    private static final Map<Member, MethodHook.Unhook> unhookMaps = new HashMap<>();
+    public static final ReplaceCallback DO_NOTHING = params -> null;
+
+
+    /**
+     * Adds an after hook to the specified method.
+     *
+     * @param member   The method to hook.
+     * @param callback The callback to execute after the method is called.
+     */
+    public static void after(Member member, AfterCallback callback) {
+        if (member == null) {
+            Log.e(TAG, "member can't be null");
+            return;
+        }
+
+        HookData info = methodMaps.computeIfAbsent(member, k -> new HookData());
+        if (info.replace == null) {
+            info.setAfter(callback);
+            if (!hookMaps.containsKey(member)) {
+                HookCallback hook = new HookCallback(member);
+                hookMaps.put(member, hook);
+                unhookMaps.put(member, hook((Executable) member, hook));
+            }
+        }
+    }
+
+    /**
+     * Adds a before hook to the specified method.
+     *
+     * @param member   The method to hook.
+     * @param callback The callback to execute before the method is called.
+     */
+    public static void before(Member member, BeforeCallback callback) {
+        if (member == null) {
+            Log.e(TAG, "member can't be null");
+            return;
+        }
+
+        HookData info = methodMaps.computeIfAbsent(member, k -> new HookData());
+        if (info.replace == null) {
+            info.setBefore(callback);
+            if (!hookMaps.containsKey(member)) {
+                HookCallback hook = new HookCallback(member);
+                hookMaps.put(member, hook);
+                unhookMaps.put(member, hook((Executable) member, hook));
+            }
+        }
+    }
+
+    /**
+     * Replaces the specified method with the provided callback.
+     *
+     * @param member   The method to replace.
+     * @param callback The callback that replaces the method.
+     */
+    public static void replace(Member member, ReplaceCallback callback) {
+        if (member == null) {
+            Log.e(TAG, "member can't be null");
+            return;
+        }
+
+        HookData info = new HookData().setReplace(callback);
+        methodMaps.put(member, info);
+        if (!replaceMaps.containsKey(member)) {
+            ReplacementCallback replace = new ReplacementCallback(member);
+            replaceMaps.put(member, replace);
+            unhookMaps.put(member, hook((Executable) member, replace));
+        }
+    }
+
+    /**
+     * Replaces the implementation of the provided `member` with a "do nothing" method.
+     *
+     * <p>This method is primarily used when you want to neutralize a method call by replacing it with
+     * a no-op (a method that does nothing). If the `member` is not already in `replaceMaps`, a new
+     * `ReplacementCallback` is created and hooked. This callback is stored in `replaceMaps` to ensure
+     * the replacement only happens once for each member.
+     *
+     * <p>The reason for creating a `ReplacementCallback` instead of using a simple placeholder is to
+     * facilitate the ability to unhook the replacement later. This allows for restoring the original
+     * method implementation if needed.
+     *
+     * @param member The method or constructor to be replaced with a "do nothing" implementation.
+     */
+    public static void doNothing(Member member) {
+        if (member == null) {
+            Log.e(TAG, "member can't be null");
+            return;
+        }
+
+        HookData info = new HookData().setReplace(DO_NOTHING);
+        methodMaps.put(member, info);
+        if (!replaceMaps.containsKey(member)) {
+            ReplacementCallback replace = new ReplacementCallback(member);
+            replaceMaps.put(member, replace);
+            unhookMaps.put(member, hook((Executable) member, replace));
+        }
+    }
+
+    /**
+     * Unhooks a method by removing its associated hook from the map and calling the unhook method.
+     *
+     * @param member The method or constructor to unhook.
+     */
+    public static void unHook(Member member) {
+        if (unhookMaps.containsKey(member)) {
+            unhookMaps.get(member).unhook();
+            unhookMaps.remove(member);
+        }
+    }
+
 
     /**
      * Installs a hook on the given executable (method or constructor).
@@ -66,11 +187,11 @@ public class AlterCore {
      * @param executable the target method or constructor to hook
      * @param callback   the callback that will be invoked before and after the original call
      * @return an {@link MethodHook.Unhook} object that can be used to remove the hook,
-     *         or {@code null} if an error occurred
+     * or {@code null} if an error occurred
      */
     public static MethodHook.Unhook hook(Executable executable, MethodHook callback) {
         try {
-            if (AlterConfig.isDebug) {
+            if (isDebug) {
                 Log.d(TAG, "Hooking method " + executable + " with callback " + callback);
             }
 
@@ -337,7 +458,7 @@ public class AlterCore {
                 .withFlags(ACC_PUBLIC)
                 .withMethod(mb -> mb
                         .of(backupMethodId)
-                        .withFlags( (ACC_PUBLIC | ACC_STATIC))
+                        .withFlags((ACC_PUBLIC | ACC_STATIC))
                         .withCode(2, ib -> {
                             if (isConstructor || methodType.returnType() == void.class) {
                                 // Constructors (and void methods) just return.
@@ -366,12 +487,12 @@ public class AlterCore {
      * @param args the arguments referenced by the format specifiers
      */
     private static void print(String fmt, Object... args) {
-        if (AlterConfig.isDebug) {
+        if (isDebug) {
             Log.i(TAG, String.format(fmt, args));
         }
     }
 
-    public static void deoptimize(Executable ex){
+    public static void deoptimize(Executable ex) {
         Hooks.deoptimize(ex);
     }
 
@@ -391,11 +512,11 @@ public class AlterCore {
      * @param thisObject the receiver, or {@code null} for static methods / constructors
      * @param args       the arguments for the call
      * @return the result of the original call ({@code null} for constructors)
-     * @throws NullPointerException       if {@code method} is {@code null}
-     * @throws IllegalAccessException     should never happen, since accessibility is forced
-     * @throws InvocationTargetException  if the underlying call throws
-     * @throws IllegalArgumentException   if the arguments don't match the target's signature,
-     *                                    or a non-null receiver is given for an un-hooked constructor
+     * @throws NullPointerException      if {@code method} is {@code null}
+     * @throws IllegalAccessException    should never happen, since accessibility is forced
+     * @throws InvocationTargetException if the underlying call throws
+     * @throws IllegalArgumentException  if the arguments don't match the target's signature,
+     *                                   or a non-null receiver is given for an un-hooked constructor
      */
     public static Object invokeOriginalMethod(Member method, Object thisObject, Object... args)
             throws IllegalAccessException, InvocationTargetException {
@@ -411,7 +532,7 @@ public class AlterCore {
 
         HookRecord hookRecord = sHookRecords.get(Reflection.getArtMethod((Executable) method));
         if (hookRecord == null) {
-            if (AlterConfig.isDebug) {
+            if (isDebug) {
                 Log.w(TAG, "Attempting to invoke the original implementation of a method that is "
                                 + "not hooked: " + method + ". This falls back to a direct call; if another "
                                 + "thread hooks this method concurrently, the call may go through the "
@@ -482,6 +603,135 @@ public class AlterCore {
         // being moved/collected by a concurrent GC while `backup` is executing.
         declaring.getClass();
         return result;
+    }
+
+    /**
+     * Stores information about the hooks applied to a method.
+     */
+    public static class HookData {
+        protected AfterCallback after;
+        protected BeforeCallback before;
+        protected ReplaceCallback replace;
+
+        /**
+         * Sets the callback to be executed after the method is called.
+         *
+         * @param after The AfterCallback instance.
+         * @return The updated MethodInfo object.
+         */
+        public HookData setAfter(AfterCallback after) {
+            this.after = after;
+            return this;
+        }
+
+        /**
+         * Sets the callback to be executed before the method is called.
+         *
+         * @param before The BeforeCallback instance.
+         * @return The updated MethodInfo object.
+         */
+        public HookData setBefore(BeforeCallback before) {
+            this.before = before;
+            return this;
+        }
+
+        /**
+         * Sets the callback to replace the method implementation.
+         *
+         * @param replace The ReplaceCallback instance.
+         * @return The updated MethodInfo object.
+         */
+        public HookData setReplace(ReplaceCallback replace) {
+            this.replace = replace;
+            return this;
+        }
+    }
+
+    /**
+     * Handles before and after hooks.
+     */
+    private static class HookCallback extends MethodHook {
+        private final HookData data;
+
+        /**
+         * Initializes HookCallback with the corresponding method's information.
+         *
+         * @param member The method or constructor to hook.
+         */
+        public HookCallback(Member member) {
+            this.data = methodMaps.get(member);
+        }
+
+        /**
+         * Executes the after callback if defined.
+         *
+         * @param params The call frame context.
+         */
+        @Override
+        public void after(HookParams params) {
+            try {
+                super.after(params);
+                if (data != null && data.after != null)
+                    data.after.afterHook(params);
+
+            } catch (Throwable err) {
+                if (isDebug) err.printStackTrace();
+            }
+        }
+
+        /**
+         * Executes the before callback if defined.
+         *
+         * @param params The call frame context.
+         */
+        @Override
+        public void before(HookParams params) {
+            try {
+                super.before(params);
+
+                if (data != null && data.before != null)
+                    data.before.beforeHook(params);
+
+            } catch (Throwable err) {
+                if (isDebug) err.printStackTrace();
+            }
+        }
+    }
+
+    /**
+     * Handles method replacement.
+     */
+    private static class ReplacementCallback extends MethodReplacement {
+        private final HookData data;
+
+        /**
+         * Initializes ReplacementCallback with the corresponding method's information.
+         *
+         * @param member The method or constructor to replace.
+         */
+        public ReplacementCallback(Member member) {
+            this.data = methodMaps.get(member);
+        }
+
+        /**
+         * Replaces the method implementation if a replacement callback is defined,
+         * otherwise invokes the original method.
+         *
+         * @param params The call frame context.
+         * @return The result of the method call.
+         * @throws Throwable if an error occurs during method execution.
+         */
+        @Override
+        public Object replace(HookParams params) throws Throwable {
+            try {
+                if (data != null && data.replace != null)
+                    return data.replace.replaceHook(params);
+
+            } catch (Throwable err) {
+                if (isDebug) err.printStackTrace();
+            }
+            return params.invokeOriginalMethod();
+        }
     }
 
 }

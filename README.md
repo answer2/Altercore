@@ -15,7 +15,6 @@ Please note that this project is currently under active development – its API 
 + Support armeabi-v7a, arm64-v8a, x86, x86-64, riscv64
 
 ## Usage
-### Basic Usage
 [![Download](https://img.shields.io/maven-central/v/io.github.answer2.altercore/core.svg)](https://repo1.maven.org/maven2/io/github/answer2/altercore/core/)
 
 Groovy
@@ -35,8 +34,8 @@ dependencies {
 ### Xposed Support
 [![Download](https://img.shields.io/maven-central/v/io.github.answer2.altercore/xposed.svg)](https://repo1.maven.org/maven2/io/github/answer2/altercore/xposed/)
 
-We supports hooking methods in Xposed-style and loading Xposed modules at now
-(Only java method hooking is supported. Modules using unsupported features like Resource-hooking won't work.)
+> We supports hooking methods in Xposed-style and loading Xposed modules at now
+> (Only java method hooking is supported. Modules using unsupported features like Resource-hooking won't work.)
 
 Groovy
 ```groovy
@@ -50,7 +49,7 @@ implementation("io.github.answer2.altercore:xposed:<version>")
 
 ## Quick Start
 
-### Before and After Hook
+#### Before and After Hook
 ```java
 AlterCore.hook(Activity.class.getDeclaredMethod("onCreate", Bundle.class), new MethodHook() {
                 @Override
@@ -65,7 +64,7 @@ AlterCore.hook(Activity.class.getDeclaredMethod("onCreate", Bundle.class), new M
             });
 ```
 
-### Replace Hook
+#### Replace Hook
 ```java
 AlterCore.hook(Activity.class.getDeclaredMethod("onCreate", Bundle.class), new MethodReplacement() {
     @Override
@@ -73,6 +72,31 @@ AlterCore.hook(Activity.class.getDeclaredMethod("onCreate", Bundle.class), new M
         return null;
     }
 });
+```
+
+#### Lambda Style Hook
+
+> **If you use ReplacementHook, you can't use after and before hooks simultaneously**
+
+```java
+AlterCore.before(
+    Activity.class.getDeclaredMethod("onCreate", Bundle.class),
+    params -> {
+        Log.d(TAG, "onCreate Before");
+});
+
+AlterCore.after(
+    Activity.class.getDeclaredMethod("onCreate", Bundle.class),
+    params -> {
+        Log.d(TAG, "onCreate After");
+});
+
+AlterCore.replace(
+    Activity.class.getDeclaredMethod("onCreate", Bundle.class),
+    params -> {
+        Log.d(TAG, "onCreate Replacement");
+        return null; // Return null as the method's result
+    });
 ```
 
 ## License
@@ -93,3 +117,7 @@ This project is licensed under the GNU General Public License v3.0.
 - [R8Annotations](https://github.com/vova7878/R8Annotations) **[MIT License]** Annotations to specify information for R8 in the code instead of proguard-rules.pro
 
 - [SunCleanerStub](https://github.com/vova7878/SunCleanerStub) **[MIT License]** Wrapper over sun.misc.Cleaner for Android
+
+- [Commons Lang](https://commons.apache.org/proper/commons-lang/) **[Apache License]** A package of Java utility classes for the classes that are in java.lang's hierarchy
+
+- [PineTool](https://github.com/answer2/PineTool/) **[LGPL-3.0 License]** PineTool is a tool that makes using Pine easier.
