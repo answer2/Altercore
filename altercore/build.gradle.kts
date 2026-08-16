@@ -3,8 +3,8 @@ import com.vanniktech.maven.publish.JavadocJar
 import com.vanniktech.maven.publish.SourcesJar
 
 plugins {
-    id("com.android.library")
-    id("com.vanniktech.maven.publish") version "0.36.0"
+    alias(libs.plugins.android.library)
+    alias(libs.plugins.maven.publish)
 }
 
 android {
@@ -34,8 +34,6 @@ android {
 }
 
 dependencies {
-
-    implementation(libs.panama.core)
     implementation(libs.panama.unsafe)
     implementation(libs.panama.llvm)
 
@@ -60,7 +58,7 @@ mavenPublishing {
     coordinates(
         groupId = "io.github.answer2.altercore",
         artifactId = "core",
-        version = "1.0.7"
+        version = "1.0.8"
     )
 
     // POM 信息（必须填写完整）

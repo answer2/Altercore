@@ -27,7 +27,7 @@ public abstract class MethodReplacement extends MethodHook {
 
     protected abstract Object replace(HookParams params) throws Throwable;
 
-    @Override public final void before(HookParams params) {
+    @Override public void before(HookParams params) {
         try {
             params.setResult(replace(params));
         } catch (Throwable e) {
@@ -35,7 +35,7 @@ public abstract class MethodReplacement extends MethodHook {
         }
     }
 
-    @Override public final void after(HookParams params) {
+    @Override public void after(HookParams params) {
     }
 
     public static MethodReplacement returnConstant(final Object result) {

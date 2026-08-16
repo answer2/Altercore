@@ -50,9 +50,11 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Member;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicLong;
 
 import dev.answer.altercore.callback.MethodHook;
 import dev.answer.altercore.core.HookParams;
@@ -64,122 +66,242 @@ public class AlterCore {
     private static final Map<Long, HookRecord> sHookRecords = new ConcurrentHashMap<>();
     private static final Object sHookLock = new Object();
 
-    // Maps to store method information, hooks, and replacements
-    private static final Map<Member, HookData> methodMaps = new HashMap<>();
-    private static final Map<Member, HookCallback> hookMaps = new HashMap<>();
-    private static final Map<Member, ReplacementCallback> replaceMaps = new HashMap<>();
-    private static final Map<Member, MethodHook.Unhook> unhookMaps = new HashMap<>();
+    // Each Member maps to exactly one HookData (its lifetime == the underlying hook's
+    // lifetime) and at most one installed low-level hook (tracked in unhookMaps).
+    // Registration (after/before/replace) and removal (removeAfter/removeBefore/
+    // removeReplace) are both funnelled through sRegistryLock so "is this the last
+    // callback -> unhook" and "is this the first callback -> hook" can never race.
+    private static final Map<Member, HookData> methodMaps = new ConcurrentHashMap<>();
+    private static final Map<Member, MethodHook.Unhook> unhookMaps = new ConcurrentHashMap<>();
+    private static final Object sRegistryLock = new Object();
+    private static final AtomicLong sTokenSeq = new AtomicLong();
+
     public static final ReplaceCallback DO_NOTHING = params -> null;
 
-
     /**
-     * Adds an after hook to the specified method.
+     * Adds an after hook to the specified method. Multiple after callbacks can coexist
+     * on the same method (from unrelated call sites) and all run, in registration order,
+     * on a single underlying hook.
      *
      * @param member   The method to hook.
      * @param callback The callback to execute after the method is called.
+     * @return a token that can be used to remove exactly this registration via
+     * {@link CallbackToken#remove()}, or {@code null} if registration failed.
      */
-    public static void after(Member member, AfterCallback callback) {
+    public static CallbackToken after(Member member, AfterCallback callback) {
         if (member == null) {
             Log.e(TAG, "member can't be null");
-            return;
+            return null;
+        }
+        if (callback == null) {
+            Log.e(TAG, "callback can't be null");
+            return null;
         }
 
-        HookData info = methodMaps.computeIfAbsent(member, k -> new HookData());
-        if (info.replace == null) {
-            info.setAfter(callback);
-            if (!hookMaps.containsKey(member)) {
-                HookCallback hook = new HookCallback(member);
-                hookMaps.put(member, hook);
-                unhookMaps.put(member, hook((Executable) member, hook));
+        synchronized (sRegistryLock) {
+            HookData info = methodMaps.computeIfAbsent(member, k -> new HookData());
+            info.addAfter(callback);
+            if (!ensureHooked(member, info)) {
+                info.removeAfter(callback);
+                return null;
             }
         }
+        return new CallbackToken(member, CallbackToken.Type.AFTER, callback);
     }
 
     /**
-     * Adds a before hook to the specified method.
+     * Adds a before hook to the specified method. Multiple before callbacks can coexist
+     * on the same method (from unrelated call sites) and all run, in registration order,
+     * on a single underlying hook.
      *
      * @param member   The method to hook.
      * @param callback The callback to execute before the method is called.
+     * @return a token that can be used to remove exactly this registration via
+     * {@link CallbackToken#remove()}, or {@code null} if registration failed.
      */
-    public static void before(Member member, BeforeCallback callback) {
+    public static CallbackToken before(Member member, BeforeCallback callback) {
         if (member == null) {
             Log.e(TAG, "member can't be null");
-            return;
+            return null;
+        }
+        if (callback == null) {
+            Log.e(TAG, "callback can't be null");
+            return null;
         }
 
-        HookData info = methodMaps.computeIfAbsent(member, k -> new HookData());
-        if (info.replace == null) {
-            info.setBefore(callback);
-            if (!hookMaps.containsKey(member)) {
-                HookCallback hook = new HookCallback(member);
-                hookMaps.put(member, hook);
-                unhookMaps.put(member, hook((Executable) member, hook));
+        synchronized (sRegistryLock) {
+            HookData info = methodMaps.computeIfAbsent(member, k -> new HookData());
+            info.addBefore(callback);
+            if (!ensureHooked(member, info)) {
+                info.removeBefore(callback);
+                return null;
             }
         }
+        return new CallbackToken(member, CallbackToken.Type.BEFORE, callback);
     }
 
     /**
-     * Replaces the specified method with the provided callback.
+     * Replaces the specified method with the provided callback. Only one replace
+     * callback is active per method at a time; registering a new one supersedes the
+     * previous one (before/after callbacks on the same method are left untouched and
+     * keep running around whichever replace callback is currently active, or around the
+     * original implementation if none is).
      *
      * @param member   The method to replace.
      * @param callback The callback that replaces the method.
+     * @return a token that can be used to remove exactly this registration via
+     * {@link CallbackToken#remove()}, or {@code null} if registration failed.
      */
-    public static void replace(Member member, ReplaceCallback callback) {
+    public static CallbackToken replace(Member member, ReplaceCallback callback) {
         if (member == null) {
             Log.e(TAG, "member can't be null");
-            return;
+            return null;
+        }
+        if (callback == null) {
+            Log.e(TAG, "callback can't be null");
+            return null;
         }
 
-        HookData info = new HookData().setReplace(callback);
-        methodMaps.put(member, info);
-        if (!replaceMaps.containsKey(member)) {
-            ReplacementCallback replace = new ReplacementCallback(member);
-            replaceMaps.put(member, replace);
-            unhookMaps.put(member, hook((Executable) member, replace));
+        synchronized (sRegistryLock) {
+            HookData info = methodMaps.computeIfAbsent(member, k -> new HookData());
+            ReplaceCallback previous = info.getReplace();
+            info.setReplace(callback);
+            if (!ensureHooked(member, info)) {
+                info.setReplace(previous);
+                return null;
+            }
         }
+        return new CallbackToken(member, CallbackToken.Type.REPLACE, callback);
     }
 
     /**
      * Replaces the implementation of the provided `member` with a "do nothing" method.
      *
-     * <p>This method is primarily used when you want to neutralize a method call by replacing it with
-     * a no-op (a method that does nothing). If the `member` is not already in `replaceMaps`, a new
-     * `ReplacementCallback` is created and hooked. This callback is stored in `replaceMaps` to ensure
-     * the replacement only happens once for each member.
-     *
-     * <p>The reason for creating a `ReplacementCallback` instead of using a simple placeholder is to
-     * facilitate the ability to unhook the replacement later. This allows for restoring the original
-     * method implementation if needed.
+     * <p>This is a convenience wrapper around {@link #replace(Member, ReplaceCallback)}
+     * using {@link #DO_NOTHING} as the replacement, so it shares the same "single active
+     * replace callback" and coexistence-with-before/after semantics.
      *
      * @param member The method or constructor to be replaced with a "do nothing" implementation.
+     * @return a token that can be used to remove exactly this registration, or
+     * {@code null} if registration failed.
      */
-    public static void doNothing(Member member) {
+    public static CallbackToken doNothing(Member member) {
+        return replace(member, DO_NOTHING);
+    }
+
+    /**
+     * Removes a previously registered after callback. If this was the last remaining
+     * callback (before/after/replace) on the method, the underlying hook is released
+     * automatically.
+     *
+     * @param member   The hooked method.
+     * @param callback The exact callback instance passed to {@link #after(Member, AfterCallback)}.
+     */
+    public static void removeAfter(Member member, AfterCallback callback) {
+        removeCallback(member, info -> info.removeAfter(callback));
+    }
+
+    /**
+     * Removes a previously registered before callback. If this was the last remaining
+     * callback (before/after/replace) on the method, the underlying hook is released
+     * automatically.
+     *
+     * @param member   The hooked method.
+     * @param callback The exact callback instance passed to {@link #before(Member, BeforeCallback)}.
+     */
+    public static void removeBefore(Member member, BeforeCallback callback) {
+        removeCallback(member, info -> info.removeBefore(callback));
+    }
+
+    /**
+     * Removes the active replace callback, but only if {@code callback} is still the
+     * one currently installed (this guards against one caller accidentally clearing a
+     * replacement callback that another caller has since installed). If this was the last
+     * remaining callback (before/after/replace) on the method, the underlying hook is
+     * released automatically.
+     *
+     * @param member   The hooked method.
+     * @param callback The exact callback instance passed to {@link #replace(Member, ReplaceCallback)}.
+     */
+    public static void removeReplace(Member member, ReplaceCallback callback) {
+        removeCallback(member, info -> {
+            if (info.getReplace() == callback) {
+                info.setReplace(null);
+            }
+        });
+    }
+
+    /**
+     * Shared removal path for {@link #removeBefore}, {@link #removeAfter} and
+     * {@link #removeReplace}: mutates this method's {@link HookData} under
+     * {@link #sRegistryLock}, then tears the underlying hook down (and drops the
+     * bookkeeping entry) once nothing is registered on it anymore.
+     */
+    private static void removeCallback(Member member, java.util.function.Consumer<HookData> mutator) {
         if (member == null) {
             Log.e(TAG, "member can't be null");
             return;
         }
 
-        HookData info = new HookData().setReplace(DO_NOTHING);
-        methodMaps.put(member, info);
-        if (!replaceMaps.containsKey(member)) {
-            ReplacementCallback replace = new ReplacementCallback(member);
-            replaceMaps.put(member, replace);
-            unhookMaps.put(member, hook((Executable) member, replace));
+        synchronized (sRegistryLock) {
+            HookData info = methodMaps.get(member);
+            if (info == null) {
+                return;
+            }
+            mutator.accept(info);
+            if (info.isEmpty()) {
+                unHookLocked(member);
+                methodMaps.remove(member);
+            }
         }
     }
 
     /**
-     * Unhooks a method by removing its associated hook from the map and calling the unhook method.
+     * Unhooks a method entirely: removes every registered before/after/replace callback
+     * and releases the underlying hook. Prefer {@link #removeBefore}, {@link #removeAfter}
+     * or {@link #removeReplace} when only one specific callback should go away.
      *
      * @param member The method or constructor to unhook.
      */
     public static void unHook(Member member) {
-        if (unhookMaps.containsKey(member)) {
-            unhookMaps.get(member).unhook();
-            unhookMaps.remove(member);
+        if (member == null) {
+            return;
+        }
+        synchronized (sRegistryLock) {
+            unHookLocked(member);
+            methodMaps.remove(member);
         }
     }
 
+    /** Must be called while holding {@link #sRegistryLock}. */
+    private static void unHookLocked(Member member) {
+        MethodHook.Unhook unhook = unhookMaps.remove(member);
+        if (unhook != null) {
+            unhook.unhook();
+        }
+    }
+
+    /**
+     * Installs the single underlying {@link UnifiedCallback} hook for {@code member} if
+     * one isn't already installed. Safe to call repeatedly; a second call while a hook
+     * is already active is a no-op that returns {@code true}. Must be called while
+     * holding {@link #sRegistryLock}.
+     *
+     * @return {@code true} if a hook is installed (either just now or already), {@code
+     * false} if installation was attempted and failed.
+     */
+    private static boolean ensureHooked(Member member, HookData info) {
+        if (unhookMaps.containsKey(member)) {
+            return true;
+        }
+        UnifiedCallback unified = new UnifiedCallback(member, info);
+        MethodHook.Unhook unhook = hook((Executable) member, unified);
+        if (unhook == null) {
+            return false;
+        }
+        unhookMaps.put(member, unhook);
+        return true;
+    }
 
     /**
      * Installs a hook on the given executable (method or constructor).
@@ -606,132 +728,139 @@ public class AlterCore {
     }
 
     /**
-     * Stores information about the hooks applied to a method.
+     * Stores every callback currently registered for one {@link Member}: zero or more
+     * before/after callbacks (each may run alongside unrelated registrations from other
+     * call sites) and at most one active replace callback.
+     * <p>
+     * A single {@link HookData} instance is reused for the entire lifetime of a
+     * member's underlying hook — it is created once (in {@code computeIfAbsent}) and
+     * only ever mutated in place, never replaced, so the {@link UnifiedCallback} built
+     * on top of it always observes the current state without needing to re-look it up.
      */
-    public static class HookData {
-        protected AfterCallback after;
-        protected BeforeCallback before;
-        protected ReplaceCallback replace;
+    private static class HookData {
+        private final List<BeforeCallback> beforeList = new CopyOnWriteArrayList<>();
+        private final List<AfterCallback> afterList = new CopyOnWriteArrayList<>();
+        private volatile ReplaceCallback replace;
 
-        /**
-         * Sets the callback to be executed after the method is called.
-         *
-         * @param after The AfterCallback instance.
-         * @return The updated MethodInfo object.
-         */
-        public HookData setAfter(AfterCallback after) {
-            this.after = after;
-            return this;
-        }
+        void addBefore(BeforeCallback cb) { beforeList.add(cb); }
+        void removeBefore(BeforeCallback cb) { beforeList.remove(cb); }
+        void addAfter(AfterCallback cb) { afterList.add(cb); }
+        void removeAfter(AfterCallback cb) { afterList.remove(cb); }
+        void setReplace(ReplaceCallback cb) { replace = cb; }
+        ReplaceCallback getReplace() { return replace; }
 
-        /**
-         * Sets the callback to be executed before the method is called.
-         *
-         * @param before The BeforeCallback instance.
-         * @return The updated MethodInfo object.
-         */
-        public HookData setBefore(BeforeCallback before) {
-            this.before = before;
-            return this;
-        }
-
-        /**
-         * Sets the callback to replace the method implementation.
-         *
-         * @param replace The ReplaceCallback instance.
-         * @return The updated MethodInfo object.
-         */
-        public HookData setReplace(ReplaceCallback replace) {
-            this.replace = replace;
-            return this;
+        boolean isEmpty() {
+            return beforeList.isEmpty() && afterList.isEmpty() && replace == null;
         }
     }
 
     /**
-     * Handles before and after hooks.
+     * A handle returned by {@link #after}, {@link #before}, {@link #replace} and
+     * {@link #doNothing} that identifies exactly one registration, so it can be removed
+     * later without needing to keep the original {@link Member} and callback reference
+     * around separately (though {@link #removeBefore}/{@link #removeAfter}/
+     * {@link #removeReplace} remain available for callers who'd rather use the callback
+     * object itself as the identifier).
+     * <p>
+     * {@link #remove()} is idempotent: calling it more than once, or after the
+     * underlying hook has already been torn down some other way, is a harmless no-op.
      */
-    private static class HookCallback extends MethodHook {
-        private final HookData data;
+    public static final class CallbackToken {
+        private enum Type { BEFORE, AFTER, REPLACE }
 
-        /**
-         * Initializes HookCallback with the corresponding method's information.
-         *
-         * @param member The method or constructor to hook.
-         */
-        public HookCallback(Member member) {
-            this.data = methodMaps.get(member);
+        private final long id = sTokenSeq.incrementAndGet();
+        private final Member member;
+        private final Type type;
+        private final Object callback;
+        private volatile boolean removed = false;
+
+        private CallbackToken(Member member, Type type, Object callback) {
+            this.member = member;
+            this.type = type;
+            this.callback = callback;
+        }
+
+        /** A stable, unique id for this registration (monotonically increasing). */
+        public long id() {
+            return id;
         }
 
         /**
-         * Executes the after callback if defined.
-         *
-         * @param params The call frame context.
+         * Removes this specific callback. If it was the last callback registered on the
+         * method, the underlying hook is released automatically. Safe to call more than
+         * once.
          */
-        @Override
-        public void after(HookParams params) {
-            try {
-                super.after(params);
-                if (data != null && data.after != null)
-                    data.after.afterHook(params);
-
-            } catch (Throwable err) {
-                if (isDebug) err.printStackTrace();
+        public synchronized void remove() {
+            if (removed) {
+                return;
+            }
+            removed = true;
+            switch (type) {
+                case BEFORE:
+                    removeBefore(member, (BeforeCallback) callback);
+                    break;
+                case AFTER:
+                    removeAfter(member, (AfterCallback) callback);
+                    break;
+                case REPLACE:
+                    removeReplace(member, (ReplaceCallback) callback);
+                    break;
             }
         }
+    }
 
-        /**
-         * Executes the before callback if defined.
-         *
-         * @param params The call frame context.
-         */
+    /**
+     * The single {@link MethodHook} implementation ever installed per member. Fans a
+     * method's low-level before/after/replace calls out to every currently-registered
+     * {@link BeforeCallback}/{@link AfterCallback}, and to the currently-active
+     * {@link ReplaceCallback} (or through to the original implementation if none is
+     * set), by reading straight from the member's shared {@link HookData} — so
+     * callbacks can be added or removed at any time without reinstalling the hook.
+     */
+    private static class UnifiedCallback extends MethodReplacement {
+        private final HookData info;
+
+        UnifiedCallback(Member member, HookData info) {
+            this.info = info;
+        }
+
         @Override
         public void before(HookParams params) {
-            try {
-                super.before(params);
-
-                if (data != null && data.before != null)
-                    data.before.beforeHook(params);
-
-            } catch (Throwable err) {
-                if (isDebug) err.printStackTrace();
+            for (BeforeCallback cb : info.beforeList) {
+                try {
+                    cb.beforeHook(params);
+                } catch (Throwable t) {
+                    Log.e(TAG, "Unexpected exception occurred when calling "
+                            + cb.getClass().getName() + ".beforeHook()", t);
+                }
             }
         }
-    }
 
-    /**
-     * Handles method replacement.
-     */
-    private static class ReplacementCallback extends MethodReplacement {
-        private final HookData data;
-
-        /**
-         * Initializes ReplacementCallback with the corresponding method's information.
-         *
-         * @param member The method or constructor to replace.
-         */
-        public ReplacementCallback(Member member) {
-            this.data = methodMaps.get(member);
+        @Override
+        public void after(HookParams params) {
+            for (AfterCallback cb : info.afterList) {
+                try {
+                    cb.afterHook(params);
+                } catch (Throwable t) {
+                    Log.e(TAG, "Unexpected exception occurred when calling "
+                            + cb.getClass().getName() + ".afterHook()", t);
+                }
+            }
         }
 
-        /**
-         * Replaces the method implementation if a replacement callback is defined,
-         * otherwise invokes the original method.
-         *
-         * @param params The call frame context.
-         * @return The result of the method call.
-         * @throws Throwable if an error occurs during method execution.
-         */
         @Override
-        public Object replace(HookParams params) throws Throwable {
-            try {
-                if (data != null && data.replace != null)
-                    return data.replace.replaceHook(params);
-
-            } catch (Throwable err) {
-                if (isDebug) err.printStackTrace();
+        protected Object replace(HookParams params) throws Throwable {
+            ReplaceCallback cb = info.getReplace();
+            if (cb != null) {
+                try {
+                    return cb.replaceHook(params);
+                } catch (Throwable t) {
+                    Log.e(TAG, "Unexpected exception occurred when calling "
+                            + cb.getClass().getName() + ".replaceHook()", t);
+                    return params.invokeOriginalMethod();
+                }
             }
             return params.invokeOriginalMethod();
         }
     }
-
 }

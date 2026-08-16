@@ -165,10 +165,10 @@ public class Hooks {
 
             //TODO: riscv64
             case RISCV64 -> new byte[]{
-                    // auipc t0, 0
-                    // ld a0, 16(t0)   ; a0 = art_method
-                    // ld t6, 24(t0)   ; t6 = entry_point
-                    // jalr zero, 0(t6)
+                    // 97 02 00 00 ; auipc t0, 0
+                    // 03 B5 02 01 ; ld a0, 16(t0)   ; a0 = art_method
+                    // 83 BF 82 01 ; ld t6, 24(t0)   ; t6 = entry_point
+                    // 67 80 0F 00 ; jalr zero, 0(t6)
                     (byte) 0x97, 0x02, 0x00, 0x00,
                     0x03, (byte) 0xB5, 0x02, 0x01,
                     (byte) 0x83, (byte) 0xBF, (byte) 0x82, 0x01,
