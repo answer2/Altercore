@@ -73,7 +73,7 @@ public class HookParams {
     public Object[] args;
     private Object result;
     private Throwable throwable;
-    /* package */ public boolean returnEarly;
+    public boolean isSkipped;
     private HookRecord hookRecord;
 
     public HookParams(HookRecord hookRecord, Object thisObject, Object[] args) {
@@ -100,7 +100,7 @@ public class HookParams {
     public void setResult(Object result) {
         this.result = result;
         this.throwable = null;
-        this.returnEarly = true;
+        this.isSkipped = true;
     }
 
     /**
@@ -110,7 +110,7 @@ public class HookParams {
     public void setResultIfNoException(Object result) {
         if (this.throwable == null) {
             this.result = result;
-            this.returnEarly = true;
+            this.isSkipped = true;
         }
     }
 
@@ -139,7 +139,7 @@ public class HookParams {
     public void setThrowable(Throwable throwable) {
         this.throwable = throwable;
         this.result = null;
-        this.returnEarly = true;
+        this.isSkipped = true;
     }
 
     /**
@@ -159,7 +159,82 @@ public class HookParams {
     public void resetResult() {
         this.result = null;
         this.throwable = null;
-        this.returnEarly = false;
+        this.isSkipped = false;
+    }
+
+    /**
+     * Returns the {@link Member} (typically a {@link java.lang.reflect.Method} or
+     * {@link java.lang.reflect.Constructor}) that represents the original target
+     * method or constructor being intercepted.
+     *
+     * @return the member object for the current invocation
+     */
+    public Member getMember() {
+        return this.method;
+    }
+
+    /**
+     * Returns the target object (the {@code this} reference) on which the original
+     * method is being invoked. For static methods, this may be {@code null}.
+     *
+     * @return the target object, or {@code null} if the method is static
+     */
+    public Object getThisObject() {
+        return this.thisObject;
+    }
+
+    /**
+     * Returns the argument array that was passed to the original method invocation.
+     * The array elements correspond to the method's parameter list in order.
+     * If the method takes no arguments, an empty array is returned (never {@code null}).
+     *
+     * @return an array of arguments as {@code Object} instances
+     */
+    public Object[] getArgs() {
+        return this.args;
+    }
+
+    /**
+     * Instructs the callback to skip the original method execution and immediately
+     * return the specified result as if the method had returned normally.
+     * <p>
+     * After calling this method, {@link #isSkipped()} will return {@code true},
+     * and the provided {@code result} will be used as the return value of the
+     * intercepted method.
+     *
+     * @param result the value to be returned from the intercepted method
+     */
+    public void returnAndSkip(Object result) {
+        this.result = result;
+        this.throwable = null;
+        this.isSkipped = true;
+    }
+
+    /**
+     * Instructs the callback to skip the original method execution and immediately
+     * throw the specified throwable as if the method had thrown an exception.
+     * <p>
+     * After calling this method, {@link #isSkipped()} will return {@code true},
+     * and the provided {@code throwable} will be thrown from the intercepted method.
+     *
+     * @param throwable the exception or error to be thrown
+     */
+    public void throwAndSkip(Throwable throwable) {
+        this.result = null;
+        this.throwable = throwable;
+        this.isSkipped = true;
+    }
+
+    /**
+     * Returns whether the current invocation has been marked as skipped via
+     * {@link #returnAndSkip(Object)} or {@link #throwAndSkip(Throwable)}.
+     * If skipped, the original method will not be invoked and the preset
+     * result or throwable will take effect.
+     *
+     * @return {@code true} if the invocation is skipped, {@code false} otherwise
+     */
+    public boolean isSkipped() {
+        return this.isSkipped;
     }
 
     /**

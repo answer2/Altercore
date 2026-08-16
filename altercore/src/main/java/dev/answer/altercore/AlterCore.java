@@ -403,15 +403,15 @@ public class AlterCore {
                         params.setThrowable(e);
                     }
 
-                    if (isConstructor && params.returnEarly) {
+                    if (isConstructor && params.isSkipped) {
                         Log.w(TAG, "returnEarly is not supported for constructors, ignoring: " + executable);
-                        params.returnEarly = false;
+                        params.isSkipped = false;
                     }
 
                     Object[] methodArgs = isStatic ? params.args : addFirst(params.args, params.thisObject);
 
                     Object originalResult = null;
-                    if (!params.returnEarly) {
+                    if (!params.isSkipped) {
                         try {
                             originalResult = original.invokeWithArguments(methodArgs);
                             params.setResult(originalResult);

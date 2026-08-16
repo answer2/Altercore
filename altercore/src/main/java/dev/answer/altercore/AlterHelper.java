@@ -19,7 +19,6 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Member;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -161,32 +160,52 @@ public class AlterHelper {
     }
 
     /**
-     * Selects every declared method named {@code name} across the class
-     * hierarchy, i.e. all of its overloads at once. Useful when the same
-     * before/after/replace behavior should apply regardless of which
-     * overload gets called. Replaces the current selection.
+     * Selects every declared method whose name matches any of {@code names},
+     * across the class hierarchy — i.e. all overloads of each given name,
+     * for every name given, in one go. Useful when the same before/after/
+     * replace behavior should apply regardless of which overload (or which
+     * of several differently-named methods) gets called. Replaces the
+     * current selection.
      *
-     * @param name the method name to match, regardless of parameter types
+     * @param names one or more method names to match, regardless of parameter types
      * @return this helper, for chaining into {@link #before}/{@link #after}/
      * {@link #replace}/{@link #doNothing}
-     * @throws IllegalArgumentException if no method with that name is
-     *                                  declared by this class or any of its superclasses
+     * @throws IllegalArgumentException if {@code names} is empty, or if none
+     *                                  of the given names is declared by this class or any of its superclasses
      */
-    public AlterHelper methods(String name) {
+    public AlterHelper methods(String... names) {
+        if (names == null || names.length == 0) {
+            throw new IllegalArgumentException("names must not be empty");
+        }
         List<Member> matches = new ArrayList<>();
         for (Class<?> c = type; c != null; c = c.getSuperclass()) {
             for (Method m : c.getDeclaredMethods()) {
-                if (m.getName().equals(name)) {
+                if (containsName(names, m.getName())) {
                     m.setAccessible(true);
                     matches.add(m);
                 }
             }
         }
         if (matches.isEmpty()) {
-            throw new IllegalArgumentException("No method named " + name + " in " + type);
+            throw new IllegalArgumentException(
+                    "No method named any of " + java.util.Arrays.toString(names) + " in " + type);
         }
         replaceSelection(matches);
         return this;
+    }
+
+    /**
+     * @param names     the candidate names to search
+     * @param candidate the name to look for
+     * @return {@code true} if {@code candidate} equals any element of {@code names}
+     */
+    private static boolean containsName(String[] names, String candidate) {
+        for (String n : names) {
+            if (n.equals(candidate)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -232,6 +251,44 @@ public class AlterHelper {
         }
         replaceSelection(matches);
         return this;
+    }
+
+    /**
+     * Adds a single declared constructor to the current selection, without
+     * discarding whatever was selected before — unlike
+     * {@link #constructor}/{@link #constructors}, which always
+     * replace it. Lets you build up a selection across multiple calls:
+     * <pre>{@code
+     * AlterHelper.on(Foo.class)
+     *         .constructor(String.class)
+     *         .andConstructor(int.class)
+     *         .andConstructor(String.class, int.class)
+     *         .after(ctorCallback); // all three constructors are hooked
+     * }</pre>
+     * If nothing has been selected yet, this behaves like
+     * {@link #constructor}.
+     *
+     * @param paramTypes the constructor's exact parameter types, in order
+     * @return this helper, for chaining into further {@code and*}/select
+     * calls or into {@link #before}/{@link #after}/{@link #replace}/{@link #doNothing}
+     * @throws IllegalArgumentException if this class declares no constructor
+     *                                  with that parameter list
+     */
+    public AlterHelper andConstructor(Class<?>... paramTypes) {
+        try {
+            Constructor<?> c = type.getDeclaredConstructor(paramTypes);
+            c.setAccessible(true);
+            addToSelection(c);
+        } catch (NoSuchMethodException e) {
+            throw new IllegalArgumentException(
+                    "No constructor " + signatureOf(paramTypes) + " in " + type, e);
+        }
+        return this;
+    }
+
+    /** Appends a single member to the current selection, keeping whatever was already there. */
+    private void addToSelection(Member single) {
+        selectedMembers.add(single);
     }
 
     /**
