@@ -428,7 +428,21 @@ public class AlterCore {
                         params.setThrowable(e);
                     }
 
-                    if (!isConstructor && params.getResult() != originalResult) {
+                    // Propagate the failure first: HookTransformer#transform
+                    // declares "throws Throwable" precisely so ART can turn it
+                    // into a pending exception. Swallowing it here used to hand
+                    // the caller null instead of, say, FileNotFoundException.
+                    if (params.hasThrowable()) {
+                        throw params.getThrowable();
+                    }
+
+                    // The backup call returns into a Java local, it does NOT
+                    // write the caller's frame, so the return slot must always
+                    // be filled for a non-void target. The previous
+                    // "getResult() != originalResult" guard skipped exactly the
+                    // common case (a before/after hook that left the result
+                    // alone) and made every such call return null.
+                    if (!isConstructor) {
                         writeReturnValue(accessor, returnType, params.getResult());
                     }
                 }
@@ -582,24 +596,71 @@ public class AlterCore {
                         .of(backupMethodId)
                         .withFlags((ACC_PUBLIC | ACC_STATIC))
                         .withCode(2, ib -> {
-                            if (isConstructor || methodType.returnType() == void.class) {
-                                // Constructors (and void methods) just return.
+                            // The body of a backup never runs: its entry point is
+                            // overwritten with the original implementation by
+                            // Hooks.hookBackup. It still has to pass the dex
+                            // verifier, and the verifier rejects a return
+                            // instruction whose register type does not match the
+                            // declared return type. Emitting return-object for
+                            // everything therefore failed for every primitive
+                            // target with
+                            //   VerifyError: ... return-object not expected
+                            // so pick the instruction from the return type.
+                            Class<?> returnType = methodType.returnType();
+                            if (isConstructor || returnType == void.class) {
                                 ib.return_void();
                             } else {
-                                ib.const_(ib.v(0), 0)
-                                        .return_object(ib.v(0));
+                                char shorty = shortyOf(returnType);
+                                if (returnType == long.class || returnType == double.class) {
+                                    ib.const_wide(ib.v(0), 0L)
+                                            .return_shorty(shorty, ib.v(0));
+                                } else {
+                                    ib.const_(ib.v(0), 0)
+                                            .return_shorty(shorty, ib.v(0));
+                                }
                             }
                         })
                 )
         );
 
+        // The backup is declared in the target's own package and its descriptor mentions
+        // the target's parameter and return types, so it can only be resolved by a loader
+        // that can see the target class. AlterCore's own loader is right for classes the
+        // app loaded itself, but a target defined by another loader -- a plugin loader, or
+        // the DexClassLoader of a virtualised package -- makes hooking fail with
+        //   NoClassDefFoundError: Failed resolution of: L<target>;
+        // and the caller only sees a null hook token. Use the declaring class's loader
+        // whenever there is one (null means the boot loader, where AlterCore's loader is
+        // the correct parent).
+        ClassLoader backupParent = executable.getDeclaringClass().getClassLoader();
+        if (backupParent == null) {
+            backupParent = AlterCore.class.getClassLoader();
+        }
+
         ClassLoader loader = ClassUtils.newLoader(
-                AlterCore.class.getClassLoader(),
+                backupParent,
                 DexIO.write(Dex.of(backupDef))
         );
 
         Class<?> backupClass = ClassUtils.forName(backupName, loader);
         return backupClass.getDeclaredMethod(backupMethodName, methodType.parameterArray());
+    }
+
+    /**
+     * DEX shorty character for a return type, as needed by
+     * {@link com.v7878.dex.builder.CodeBuilder#return_shorty(char, int)}.
+     */
+    private static char shortyOf(Class<?> type) {
+        if (type == void.class)    return 'V';
+        if (type == boolean.class) return 'Z';
+        if (type == byte.class)    return 'B';
+        if (type == short.class)   return 'S';
+        if (type == char.class)    return 'C';
+        if (type == int.class)     return 'I';
+        if (type == long.class)    return 'J';
+        if (type == float.class)   return 'F';
+        if (type == double.class)  return 'D';
+        return 'L';
     }
 
     /**
