@@ -27,6 +27,10 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "AlterCore"
-include(":app")
-include(":altercore")
-include(":xposed")
+include(
+    ":app",
+    ":altercore",
+    ":xposed",
+    ":stubs",
+    ":bridge"
+)

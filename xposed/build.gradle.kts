@@ -3,8 +3,8 @@ import com.vanniktech.maven.publish.JavadocJar
 import com.vanniktech.maven.publish.SourcesJar
 
 plugins {
-    id("com.android.library")
-    id("com.vanniktech.maven.publish") version "0.36.0"
+    alias(libs.plugins.android.library)
+    alias(libs.plugins.maven.publish)
 }
 
 android {
@@ -28,7 +28,12 @@ android {
 }
 
 dependencies {
-    compileOnly( project(":altercore"))
+    compileOnly(project(":stubs"))
+    compileOnly(project(":bridge"))
+    compileOnly(project(":altercore"))
+    
+    // libxposed API 101 support
+    compileOnly("io.github.libxposed:api:101.0.1")
 }
 
 

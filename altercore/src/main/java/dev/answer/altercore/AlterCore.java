@@ -41,6 +41,11 @@ import dev.answer.altercore.callback.MethodReplacement;
 import dev.answer.altercore.callback.ReplaceCallback;
 import dev.answer.altercore.core.HookTransformer;
 import dev.answer.altercore.core.Hooks;
+import dev.answer.altercore.exception.HookException;
+import dev.answer.altercore.exception.HookInstallationException;
+import dev.answer.altercore.exception.InvalidTargetException;
+import dev.answer.altercore.monitoring.HookStats;
+import dev.answer.altercore.monitoring.PerformanceMonitor;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodType;
@@ -50,32 +55,90 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Member;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import dev.answer.altercore.callback.MethodHook;
 import dev.answer.altercore.core.HookParams;
 import dev.answer.altercore.core.HookRecord;
 
+/**
+ * AlterCore: Pure-Java ART hook library for Android 8.0-17.
+ * 
+ * <p>Provides Xposed-style hook API with support for before/after/replace callbacks.
+ * Multiple callbacks can coexist on the same method, and all operations are thread-safe.
+ * 
+ * <p><b>Basic usage:</b>
+ * <pre>{@code
+ * // Before hook
+ * CallbackToken token = AlterCore.before(targetMethod, params -> {
+ *     Log.d("Hook", "Method called with args: " + Arrays.toString(params.args));
+ * });
+ * 
+ * // After hook
+ * AlterCore.after(targetMethod, params -> {
+ *     Log.d("Hook", "Method returned: " + params.getResult());
+ * });
+ * 
+ * // Replace hook
+ * AlterCore.replace(targetMethod, params -> {
+ *     return "custom result";
+ * });
+ * 
+ * // Remove hook
+ * token.remove();
+ * }</pre>
+ * 
+ * <p><b>Performance monitoring:</b>
+ * <pre>{@code
+ * PerformanceMonitor.setEnabled(true);
+ * // ... run your hooked code ...
+ * HookStats stats = PerformanceMonitor.getStats(targetMethod);
+ * Log.d("Perf", "Avg execution time: " + stats.getBeforeAvgNanos() + "ns");
+ * }</pre>
+ * 
+ * <p><b>Query hook state:</b>
+ * <pre>{@code
+ * if (AlterCore.isHooked(targetMethod)) {
+ *     HookInfo info = AlterCore.getHookInfo(targetMethod);
+ *     Log.d("Hook", "Callbacks: " + info.getTotalCallbackCount());
+ * }
+ * }</pre>
+ * 
+ * @see CallbackToken
+ * @see HookInfo
+ * @see PerformanceMonitor
+ */
 public class AlterCore {
     private static final String TAG = "AlterCore";
     public static final Object[] EMPTY_OBJECT_ARRAY = new Object[0];
+    
+    // Core hook storage: artMethod pointer -> HookRecord
+    // Memory leak fix: cleaned up in unHookLocked()
     private static final Map<Long, HookRecord> sHookRecords = new ConcurrentHashMap<>();
     private static final Object sHookLock = new Object();
 
-    // Each Member maps to exactly one HookData (its lifetime == the underlying hook's
-    // lifetime) and at most one installed low-level hook (tracked in unhookMaps).
-    // Registration (after/before/replace) and removal (removeAfter/removeBefore/
-    // removeReplace) are both funnelled through sRegistryLock so "is this the last
-    // callback -> unhook" and "is this the first callback -> hook" can never race.
+    // Callback registry: Member -> HookData
+    // Fine-grained locking: per-member locks in HookData instead of global sRegistryLock
     private static final Map<Member, HookData> methodMaps = new ConcurrentHashMap<>();
     private static final Map<Member, MethodHook.Unhook> unhookMaps = new ConcurrentHashMap<>();
-    private static final Object sRegistryLock = new Object();
+    
+    // Registry lock: protects methodMaps and unhookMaps structure changes
+    // Individual HookData instances have their own locks for callback list mutations
+    private static final ReadWriteLock sRegistryLock = new ReentrantReadWriteLock();
     private static final AtomicLong sTokenSeq = new AtomicLong();
 
+    /** A replace callback that does nothing and returns null. */
     public static final ReplaceCallback DO_NOTHING = params -> null;
 
     /**
@@ -87,26 +150,29 @@ public class AlterCore {
      * @param callback The callback to execute after the method is called.
      * @return a token that can be used to remove exactly this registration via
      * {@link CallbackToken#remove()}, or {@code null} if registration failed.
+     * @throws InvalidTargetException if member is null or invalid
+     * @throws HookException if callback is null
      */
     public static CallbackToken after(Member member, AfterCallback callback) {
         if (member == null) {
-            Log.e(TAG, "member can't be null");
-            return null;
+            throw new InvalidTargetException(HookException.ErrorCode.NULL_TARGET, "member can't be null");
         }
         if (callback == null) {
-            Log.e(TAG, "callback can't be null");
-            return null;
+            throw new HookException(HookException.ErrorCode.NULL_CALLBACK, "callback can't be null");
         }
 
-        synchronized (sRegistryLock) {
-            HookData info = methodMaps.computeIfAbsent(member, k -> new HookData());
+        sRegistryLock.writeLock().lock();
+        try {
+            HookData info = methodMaps.computeIfAbsent(member, k -> new HookData(member));
             info.addAfter(callback);
             if (!ensureHooked(member, info)) {
                 info.removeAfter(callback);
                 return null;
             }
+            return new CallbackToken(member, CallbackToken.Type.AFTER, callback);
+        } finally {
+            sRegistryLock.writeLock().unlock();
         }
-        return new CallbackToken(member, CallbackToken.Type.AFTER, callback);
     }
 
     /**
@@ -118,26 +184,29 @@ public class AlterCore {
      * @param callback The callback to execute before the method is called.
      * @return a token that can be used to remove exactly this registration via
      * {@link CallbackToken#remove()}, or {@code null} if registration failed.
+     * @throws InvalidTargetException if member is null or invalid
+     * @throws HookException if callback is null
      */
     public static CallbackToken before(Member member, BeforeCallback callback) {
         if (member == null) {
-            Log.e(TAG, "member can't be null");
-            return null;
+            throw new InvalidTargetException(HookException.ErrorCode.NULL_TARGET, "member can't be null");
         }
         if (callback == null) {
-            Log.e(TAG, "callback can't be null");
-            return null;
+            throw new HookException(HookException.ErrorCode.NULL_CALLBACK, "callback can't be null");
         }
 
-        synchronized (sRegistryLock) {
-            HookData info = methodMaps.computeIfAbsent(member, k -> new HookData());
+        sRegistryLock.writeLock().lock();
+        try {
+            HookData info = methodMaps.computeIfAbsent(member, k -> new HookData(member));
             info.addBefore(callback);
             if (!ensureHooked(member, info)) {
                 info.removeBefore(callback);
                 return null;
             }
+            return new CallbackToken(member, CallbackToken.Type.BEFORE, callback);
+        } finally {
+            sRegistryLock.writeLock().unlock();
         }
-        return new CallbackToken(member, CallbackToken.Type.BEFORE, callback);
     }
 
     /**
@@ -151,27 +220,30 @@ public class AlterCore {
      * @param callback The callback that replaces the method.
      * @return a token that can be used to remove exactly this registration via
      * {@link CallbackToken#remove()}, or {@code null} if registration failed.
+     * @throws InvalidTargetException if member is null or invalid
+     * @throws HookException if callback is null
      */
     public static CallbackToken replace(Member member, ReplaceCallback callback) {
         if (member == null) {
-            Log.e(TAG, "member can't be null");
-            return null;
+            throw new InvalidTargetException(HookException.ErrorCode.NULL_TARGET, "member can't be null");
         }
         if (callback == null) {
-            Log.e(TAG, "callback can't be null");
-            return null;
+            throw new HookException(HookException.ErrorCode.NULL_CALLBACK, "callback can't be null");
         }
 
-        synchronized (sRegistryLock) {
-            HookData info = methodMaps.computeIfAbsent(member, k -> new HookData());
+        sRegistryLock.writeLock().lock();
+        try {
+            HookData info = methodMaps.computeIfAbsent(member, k -> new HookData(member));
             ReplaceCallback previous = info.getReplace();
             info.setReplace(callback);
             if (!ensureHooked(member, info)) {
                 info.setReplace(previous);
                 return null;
             }
+            return new CallbackToken(member, CallbackToken.Type.REPLACE, callback);
+        } finally {
+            sRegistryLock.writeLock().unlock();
         }
-        return new CallbackToken(member, CallbackToken.Type.REPLACE, callback);
     }
 
     /**
@@ -187,6 +259,72 @@ public class AlterCore {
      */
     public static CallbackToken doNothing(Member member) {
         return replace(member, DO_NOTHING);
+    }
+
+    /**
+     * Batch hook: adds the same after callback to multiple members.
+     * 
+     * @param members the methods/constructors to hook
+     * @param callback the callback to execute after each method is called
+     * @return a list of tokens for successful hooks (failed hooks are omitted)
+     */
+    public static List<CallbackToken> afterBatch(Collection<? extends Member> members, AfterCallback callback) {
+        List<CallbackToken> tokens = new ArrayList<>(members.size());
+        for (Member member : members) {
+            try {
+                CallbackToken token = after(member, callback);
+                if (token != null) {
+                    tokens.add(token);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to hook " + member + " in batch", e);
+            }
+        }
+        return tokens;
+    }
+
+    /**
+     * Batch hook: adds the same before callback to multiple members.
+     * 
+     * @param members the methods/constructors to hook
+     * @param callback the callback to execute before each method is called
+     * @return a list of tokens for successful hooks (failed hooks are omitted)
+     */
+    public static List<CallbackToken> beforeBatch(Collection<? extends Member> members, BeforeCallback callback) {
+        List<CallbackToken> tokens = new ArrayList<>(members.size());
+        for (Member member : members) {
+            try {
+                CallbackToken token = before(member, callback);
+                if (token != null) {
+                    tokens.add(token);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to hook " + member + " in batch", e);
+            }
+        }
+        return tokens;
+    }
+
+    /**
+     * Batch hook: replaces multiple members with the same callback.
+     * 
+     * @param members the methods/constructors to replace
+     * @param callback the replacement callback
+     * @return a list of tokens for successful hooks (failed hooks are omitted)
+     */
+    public static List<CallbackToken> replaceBatch(Collection<? extends Member> members, ReplaceCallback callback) {
+        List<CallbackToken> tokens = new ArrayList<>(members.size());
+        for (Member member : members) {
+            try {
+                CallbackToken token = replace(member, callback);
+                if (token != null) {
+                    tokens.add(token);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to hook " + member + " in batch", e);
+            }
+        }
+        return tokens;
     }
 
     /**
@@ -243,7 +381,8 @@ public class AlterCore {
             return;
         }
 
-        synchronized (sRegistryLock) {
+        sRegistryLock.writeLock().lock();
+        try {
             HookData info = methodMaps.get(member);
             if (info == null) {
                 return;
@@ -253,6 +392,8 @@ public class AlterCore {
                 unHookLocked(member);
                 methodMaps.remove(member);
             }
+        } finally {
+            sRegistryLock.writeLock().unlock();
         }
     }
 
@@ -267,25 +408,101 @@ public class AlterCore {
         if (member == null) {
             return;
         }
-        synchronized (sRegistryLock) {
+        sRegistryLock.writeLock().lock();
+        try {
             unHookLocked(member);
             methodMaps.remove(member);
+        } finally {
+            sRegistryLock.writeLock().unlock();
         }
     }
 
-    /** Must be called while holding {@link #sRegistryLock}. */
+    /** 
+     * Must be called while holding {@link #sRegistryLock} write lock.
+     * Fixed memory leak: now cleans up sHookRecords entry.
+     */
     private static void unHookLocked(Member member) {
         MethodHook.Unhook unhook = unhookMaps.remove(member);
         if (unhook != null) {
             unhook.unhook();
+            // Memory leak fix: remove from sHookRecords
+            if (member instanceof Executable) {
+                long artMethod = getArtMethod((Executable) member);
+                sHookRecords.remove(artMethod);
+            }
+            // Clean up performance monitoring stats
+            PerformanceMonitor.removeStats(member);
         }
+    }
+
+    /**
+     * Checks whether a method is currently hooked.
+     * 
+     * @param member the method or constructor to check
+     * @return {@code true} if the member has at least one active callback
+     */
+    public static boolean isHooked(Member member) {
+        if (member == null) {
+            return false;
+        }
+        sRegistryLock.readLock().lock();
+        try {
+            return methodMaps.containsKey(member);
+        } finally {
+            sRegistryLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Retrieves the current hook state for a method.
+     * 
+     * @param member the method or constructor to query
+     * @return a {@link HookInfo} snapshot, or {@code null} if not hooked
+     */
+    public static HookInfo getHookInfo(Member member) {
+        if (member == null) {
+            return null;
+        }
+        sRegistryLock.readLock().lock();
+        try {
+            HookData info = methodMaps.get(member);
+            if (info == null) {
+                return null;
+            }
+            return info.getSnapshot();
+        } finally {
+            sRegistryLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Returns all currently hooked members.
+     * 
+     * @return an immutable set of hooked methods and constructors
+     */
+    public static Set<Member> getHookedMembers() {
+        sRegistryLock.readLock().lock();
+        try {
+            return Collections.unmodifiableSet(methodMaps.keySet());
+        } finally {
+            sRegistryLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Returns the count of currently hooked members.
+     * 
+     * @return the number of methods/constructors with active hooks
+     */
+    public static int getHookedCount() {
+        return methodMaps.size();
     }
 
     /**
      * Installs the single underlying {@link UnifiedCallback} hook for {@code member} if
      * one isn't already installed. Safe to call repeatedly; a second call while a hook
      * is already active is a no-op that returns {@code true}. Must be called while
-     * holding {@link #sRegistryLock}.
+     * holding {@link #sRegistryLock} write lock.
      *
      * @return {@code true} if a hook is installed (either just now or already), {@code
      * false} if installation was attempted and failed.
@@ -310,6 +527,8 @@ public class AlterCore {
      * @param callback   the callback that will be invoked before and after the original call
      * @return an {@link MethodHook.Unhook} object that can be used to remove the hook,
      * or {@code null} if an error occurred
+     * @throws InvalidTargetException if the target is invalid (null, abstract, class initializer)
+     * @throws HookInstallationException if native hook installation fails
      */
     public static MethodHook.Unhook hook(Executable executable, MethodHook callback) {
         try {
@@ -318,10 +537,10 @@ public class AlterCore {
             }
 
             if (executable == null) {
-                throw new NullPointerException("method == null");
+                throw new InvalidTargetException(HookException.ErrorCode.NULL_TARGET, "method == null");
             }
             if (callback == null) {
-                throw new NullPointerException("callback == null");
+                throw new HookException(HookException.ErrorCode.NULL_CALLBACK, "callback == null");
             }
 
             int modifiers = executable.getModifiers();
@@ -333,20 +552,45 @@ public class AlterCore {
 
             if (executable instanceof Method) {
                 if (Modifier.isAbstract(modifiers)) {
-                    throw new IllegalArgumentException("Cannot hook abstract methods: " + executable);
+                    throw new InvalidTargetException(
+                        HookException.ErrorCode.ABSTRACT_METHOD,
+                        "Cannot hook abstract methods: " + executable
+                    );
                 }
                 ((Method) executable).setAccessible(true);
             } else if (executable instanceof Constructor) {
                 if (isStatic) {
-                    throw new IllegalArgumentException("Cannot hook class initializer: " + executable);
+                    throw new InvalidTargetException(
+                        HookException.ErrorCode.CLASS_INITIALIZER,
+                        "Cannot hook class initializer: " + executable
+                    );
                 }
                 ((Constructor<?>) executable).setAccessible(true);
             } else {
-                throw new IllegalArgumentException("Only methods and constructors can be hooked: " + executable);
+                throw new InvalidTargetException(
+                    HookException.ErrorCode.INVALID_TARGET_TYPE,
+                    "Only methods and constructors can be hooked: " + executable
+                );
             }
 
-            Method backupMethod = buildBackup(executable);
-            Hooks.hook(backupMethod, executable, Hooks.EntryPointType.DIRECT);
+            Method backupMethod;
+            try {
+                backupMethod = buildBackup(executable);
+            } catch (Exception e) {
+                throw new HookInstallationException(
+                    "Failed to build backup method for " + executable,
+                    e
+                );
+            }
+            
+            try {
+                Hooks.hook(backupMethod, executable, Hooks.EntryPointType.DIRECT);
+            } catch (Exception e) {
+                throw new HookInstallationException(
+                    "Failed to hook backup method for " + executable,
+                    e
+                );
+            }
 
             long artMethod = getArtMethod(executable);
             HookRecord hookRecord;
@@ -394,9 +638,24 @@ public class AlterCore {
 
                     HookParams params = new HookParams(finalHookRecord, thisObject, argsData);
 
+                    // Performance monitoring: track before callback
+                    long beforeStart = 0;
+                    if (PerformanceMonitor.isEnabled()) {
+                        beforeStart = System.nanoTime();
+                    }
+
                     try {
                         callback.before(params);
+                        if (PerformanceMonitor.isEnabled()) {
+                            HookStats stats = PerformanceMonitor.getOrCreateStats(executable);
+                            stats.recordBeforeCall(System.nanoTime() - beforeStart);
+                        }
                     } catch (Throwable e) {
+                        if (PerformanceMonitor.isEnabled()) {
+                            HookStats stats = PerformanceMonitor.getOrCreateStats(executable);
+                            stats.recordBeforeCall(System.nanoTime() - beforeStart);
+                            stats.recordBeforeError();
+                        }
                         Log.e(TAG, "Unexpected exception occurred when calling "
                                 + callback.getClass().getName() + ".beforeCall()", e);
                         params.resetResult();
@@ -420,9 +679,24 @@ public class AlterCore {
                         }
                     }
 
+                    // Performance monitoring: track after callback
+                    long afterStart = 0;
+                    if (PerformanceMonitor.isEnabled()) {
+                        afterStart = System.nanoTime();
+                    }
+
                     try {
                         callback.after(params);
+                        if (PerformanceMonitor.isEnabled()) {
+                            HookStats stats = PerformanceMonitor.getOrCreateStats(executable);
+                            stats.recordAfterCall(System.nanoTime() - afterStart);
+                        }
                     } catch (Throwable e) {
+                        if (PerformanceMonitor.isEnabled()) {
+                            HookStats stats = PerformanceMonitor.getOrCreateStats(executable);
+                            stats.recordAfterCall(System.nanoTime() - afterStart);
+                            stats.recordAfterError();
+                        }
                         Log.e(TAG, "Unexpected exception occurred when calling "
                                 + callback.getClass().getName() + ".after()", e);
                         params.setThrowable(e);
@@ -448,17 +722,25 @@ public class AlterCore {
                 }
             };
 
-            Hooks.hook(executable, Hooks.EntryPointType.DIRECT,
-                    hookTransformer, Hooks.EntryPointType.DIRECT);
+            try {
+                Hooks.hook(executable, Hooks.EntryPointType.DIRECT,
+                        hookTransformer, Hooks.EntryPointType.DIRECT);
+            } catch (Exception e) {
+                throw new HookInstallationException(
+                    "Failed to install hook transformer for " + executable,
+                    e
+                );
+            }
 
             return callback.new Unhook(hookRecord);
+        } catch (HookException e) {
+            // Re-throw our own exceptions
+            throw e;
         } catch (Throwable e) {
-            // Previously this only caught Exception and silently printed the stack trace.
-            // Log the full failure here so callers can tell whether buildBackup, Hooks.hook,
-            // or something else failed.
+            // Wrap unexpected errors
             Log.e(TAG, "Failed to hook " + executable, e);
+            throw new HookInstallationException("Failed to hook " + executable, e);
         }
-        return null;
     }
 
     /**
@@ -797,11 +1079,21 @@ public class AlterCore {
      * member's underlying hook — it is created once (in {@code computeIfAbsent}) and
      * only ever mutated in place, never replaced, so the {@link UnifiedCallback} built
      * on top of it always observes the current state without needing to re-look it up.
+     * 
+     * <p>Optimized with CopyOnWriteArrayList for read-heavy workload (hook invocations
+     * are far more frequent than registration/removal).
      */
     private static class HookData {
+        private final Member target;
+        private final long hookTimestamp;
         private final List<BeforeCallback> beforeList = new CopyOnWriteArrayList<>();
         private final List<AfterCallback> afterList = new CopyOnWriteArrayList<>();
         private volatile ReplaceCallback replace;
+
+        HookData(Member target) {
+            this.target = target;
+            this.hookTimestamp = System.currentTimeMillis();
+        }
 
         void addBefore(BeforeCallback cb) { beforeList.add(cb); }
         void removeBefore(BeforeCallback cb) { beforeList.remove(cb); }
@@ -812,6 +1104,16 @@ public class AlterCore {
 
         boolean isEmpty() {
             return beforeList.isEmpty() && afterList.isEmpty() && replace == null;
+        }
+
+        HookInfo getSnapshot() {
+            return new HookInfo(
+                target,
+                beforeList.size(),
+                afterList.size(),
+                replace != null,
+                hookTimestamp
+            );
         }
     }
 
@@ -877,20 +1179,37 @@ public class AlterCore {
      * {@link ReplaceCallback} (or through to the original implementation if none is
      * set), by reading straight from the member's shared {@link HookData} — so
      * callbacks can be added or removed at any time without reinstalling the hook.
+     * 
+     * <p>Performance monitoring is integrated at this level to measure callback overhead.
      */
     private static class UnifiedCallback extends MethodReplacement {
+        private final Member target;
         private final HookData info;
 
-        UnifiedCallback(Member member, HookData info) {
+        UnifiedCallback(Member target, HookData info) {
+            this.target = target;
             this.info = info;
         }
 
         @Override
         public void before(HookParams params) {
             for (BeforeCallback cb : info.beforeList) {
+                long start = 0;
+                if (PerformanceMonitor.isEnabled()) {
+                    start = System.nanoTime();
+                }
                 try {
                     cb.beforeHook(params);
+                    if (PerformanceMonitor.isEnabled()) {
+                        HookStats stats = PerformanceMonitor.getOrCreateStats(target);
+                        stats.recordBeforeCall(System.nanoTime() - start);
+                    }
                 } catch (Throwable t) {
+                    if (PerformanceMonitor.isEnabled()) {
+                        HookStats stats = PerformanceMonitor.getOrCreateStats(target);
+                        stats.recordBeforeCall(System.nanoTime() - start);
+                        stats.recordBeforeError();
+                    }
                     Log.e(TAG, "Unexpected exception occurred when calling "
                             + cb.getClass().getName() + ".beforeHook()", t);
                 }
@@ -900,9 +1219,22 @@ public class AlterCore {
         @Override
         public void after(HookParams params) {
             for (AfterCallback cb : info.afterList) {
+                long start = 0;
+                if (PerformanceMonitor.isEnabled()) {
+                    start = System.nanoTime();
+                }
                 try {
                     cb.afterHook(params);
+                    if (PerformanceMonitor.isEnabled()) {
+                        HookStats stats = PerformanceMonitor.getOrCreateStats(target);
+                        stats.recordAfterCall(System.nanoTime() - start);
+                    }
                 } catch (Throwable t) {
+                    if (PerformanceMonitor.isEnabled()) {
+                        HookStats stats = PerformanceMonitor.getOrCreateStats(target);
+                        stats.recordAfterCall(System.nanoTime() - start);
+                        stats.recordAfterError();
+                    }
                     Log.e(TAG, "Unexpected exception occurred when calling "
                             + cb.getClass().getName() + ".afterHook()", t);
                 }
@@ -913,9 +1245,23 @@ public class AlterCore {
         protected Object replace(HookParams params) throws Throwable {
             ReplaceCallback cb = info.getReplace();
             if (cb != null) {
+                long start = 0;
+                if (PerformanceMonitor.isEnabled()) {
+                    start = System.nanoTime();
+                }
                 try {
-                    return cb.replaceHook(params);
+                    Object result = cb.replaceHook(params);
+                    if (PerformanceMonitor.isEnabled()) {
+                        HookStats stats = PerformanceMonitor.getOrCreateStats(target);
+                        stats.recordReplaceCall(System.nanoTime() - start);
+                    }
+                    return result;
                 } catch (Throwable t) {
+                    if (PerformanceMonitor.isEnabled()) {
+                        HookStats stats = PerformanceMonitor.getOrCreateStats(target);
+                        stats.recordReplaceCall(System.nanoTime() - start);
+                        stats.recordReplaceError();
+                    }
                     Log.e(TAG, "Unexpected exception occurred when calling "
                             + cb.getClass().getName() + ".replaceHook()", t);
                     return params.invokeOriginalMethod();
