@@ -662,8 +662,11 @@ public class AlterCore {
                         params.setThrowable(e);
                     }
 
-                    if (isConstructor && params.isSkipped) {
-                        Log.w(TAG, "returnEarly is not supported for constructors, ignoring: " + executable);
+                    // Skipping the original body of a <init> target leaves `this`
+                    // uninitialized, so it is only honored for callbacks that opt in.
+                    if (isConstructor && params.isSkipped && !callback.allowsConstructorSkip()) {
+                        Log.w(TAG, "Skipping a constructor is not allowed for "
+                                + callback.getClass().getName() + ", ignoring: " + executable);
                         params.isSkipped = false;
                     }
 

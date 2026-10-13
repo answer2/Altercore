@@ -30,6 +30,19 @@ public class MethodHook {
     public void after(HookParams params) throws Throwable {
     }
 
+    /**
+     * Whether this callback may skip the original constructor body by setting a result or a
+     * throwable from {@code before}.
+     *
+     * <p>Disabled by default: leaving a freshly allocated object uninitialized is a real hazard
+     * for callers that then use it, so the engine ignores a skipped frame on {@code <init>}
+     * targets for ordinary callbacks. Interceptor-chain dispatchers opt in here because their
+     * contract requires "did not proceed" to mean "the original did not run".</p>
+     */
+    public boolean allowsConstructorSkip() {
+        return false;
+    }
+
     public class Unhook {
         private final HookRecord hookRecord;
 
