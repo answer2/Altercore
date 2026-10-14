@@ -60,35 +60,36 @@ ModernModuleLoader.reload(modulePath, extras, replacementLoader);
 Modules are found through `assets/xposed_init` (legacy) and through
 `META-INF/xposed/java_init.list` with `module.prop` and `scope.list` (libxposed). A module that
 ships both is started through both paths, like on other frameworks, and has to avoid hooking twice
-by itself. `XposedBridge.getXposedVersion()` returns 93, `getApiVersion()` returns 102.
+by itself. `XposedBridge.getXposedVersion()` returns 93; the libxposed API implemented here is 102,
+which `XposedInterface#getApiVersion()` reports.
+
+Works:
+
++ method and constructor hooking, `XposedHelpers`, `XC_MethodReplacement`, priorities, unhook
++ skipping the original constructor body, when the callback asks for it
++ the libxposed chain API: `hook().intercept()`, `Chain`, exception modes, `detach()`, hook ids,
+  `replaceHook()`, hot reload, `deoptimize()`, `getInvoker()`
++ `XSharedPreferences`, read only
++ `handleInitPackageResources`, `XResources.setReplacement` and `XC_LayoutInflated`, described below
+
+Does not work:
+
++ zygote and system_server injection. `initZygote` runs when the module is loaded instead, and
+  `onSystemServerStarting` is never called
++ `XResources` is not a `Resources` subclass, so a module that treats `param.res` as one fails.
+  Such a subclass cannot be compiled against `android.jar`
++ `hookClassInitializer`, remote preferences and remote files (there is no manager process),
+  `initCmdApp`, `XSharedPreferences.edit()`
 
 Resource hooking works by hooking the public `Resources` and `TypedArray` getters and matching each
 requested id by its `package/type/entry` name, so no `Resources` instance of the host is replaced and
 no hidden member is called. A package is offered to modules the first time one of its resources is
 read.
 
-Works:
-
-+ method and constructor hooking, `XposedHelpers`, `XC_MethodReplacement`, priorities, unhook
-+ skipping the original constructor body, when the callback asks for it
-+ `handleInitPackageResources`, `XResources.setReplacement` and `XC_LayoutInflated`, including
-  values that reach a view through a style or theme attribute
-+ a replacement given as a resource id, as long as the hooked app can resolve it (`android.R.*`
-  included)
-+ the libxposed chain API: `hook().intercept()`, `Chain`, exception modes, `detach()`, hook ids,
-  `replaceHook()`, hot reload, `deoptimize()`, `getInvoker()`
-+ `XSharedPreferences`, read only
-
-Does not work:
-
-+ zygote and system_server injection. `initZygote` runs when the module is loaded instead, and
-  `onSystemServerStarting` is never called
-+ a style value written as a literal instead of a resource reference, and whole-theme replacement
-+ `XResources` is not a `Resources` subclass, so a module that treats `param.res` as one fails.
-  Such a subclass cannot be compiled against `android.jar`
-+ resources of a package the hooked app cannot resolve. Register the object itself instead
-+ `hookClassInitializer`, remote preferences and remote files (there is no manager process),
-  `initCmdApp`, `XSharedPreferences.edit()`
+A replacement also reaches a view when the layout asks for it through a style or a theme attribute,
+and it may be given as a resource id as long as the hooked app resolves that id (`android.R.*`
+included). What does not reach is a style value written as a literal instead of a resource reference,
+whole-theme replacement, and resources of a package the hooked app cannot resolve itself.
 
 Groovy
 ```groovy
@@ -107,12 +108,12 @@ implementation("io.github.answer2.altercore:xposed:<version>")
 AlterCore.hook(Activity.class.getDeclaredMethod("onCreate", Bundle.class), new MethodHook() {
                 @Override
                 public void before(HookParams params) throws Throwable {
-                    super.after(params);
+                    super.before(params);
                 }
 
                 @Override
                 public void after(HookParams params) throws Throwable {
-                    super.before(params);
+                    super.after(params);
                 }
             });
 ```
@@ -129,7 +130,8 @@ AlterCore.hook(Activity.class.getDeclaredMethod("onCreate", Bundle.class), new M
 
 #### Lambda Style Hook
 
-> **If you use ReplacementHook, you can't use after and before hooks simultaneously**
+> **A member keeps one replacement: registering a second `replace` callback takes the slot from the
+> first. `replace` coexists with `before` and `after`.**
 
 ```java
 AlterCore.before(
@@ -175,6 +177,6 @@ This project is licensed under the GNU General Public License v3.0.
 
 - [libxposed API](https://github.com/libxposed/api) **[Apache License]** The modern Xposed module API this library implements and ships as a runtime dependency.
 
-- [LSPosed](https://github.com/LSPosed/LSPosed/) **[GPL-3.0 License]** Reference implementation whose legacy API shapes (`IXposedHookCmdInit`, `XC_InitPackageResources`, `XC_LayoutInflated`, `XResources`, `HiddenApiBridge`) are followed here for module compatibility.
+- [LSPosed](https://github.com/LSPosed/LSPosed/) **[GPL-3.0 License]** Reference implementation whose legacy API shapes (`IXposedHookCmdInit`, `XC_InitPackageResources`, `XC_LayoutInflated`, `XResources`) are followed here for module compatibility.
 
 - [PineTool](https://github.com/answer2/PineTool/) **[LGPL-3.0 License]** PineTool is a tool that makes using Pine easier.
