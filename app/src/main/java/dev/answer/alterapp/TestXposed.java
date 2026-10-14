@@ -16,8 +16,12 @@
  */
 package dev.answer.alterapp;
 
+import android.os.Environment;
 import android.util.Log;
 
+import java.io.File;
+import java.io.FileWriter;
+import java.io.Writer;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -25,6 +29,7 @@ import java.util.List;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XC_MethodReplacement;
+import de.robv.android.xposed.XSharedPreferences;
 import de.robv.android.xposed.XposedBridge;
 
 /**
@@ -72,6 +77,7 @@ public class TestXposed {
         results.add(testInstanceMethodHookWithOriginalCall());
         results.add(testStaticMethodReplacement());
         results.add(testConstructorArgumentHook());
+        results.add(testPreferencesReadThroughFramework());
         return results;
     }
 
@@ -206,6 +212,40 @@ public class TestXposed {
             return new TestResult(testName, baseline, hooked, restored);
         } catch (Throwable e) {
             return TestResult.failure(testName, e);
+        }
+    }
+
+    /**
+     * Reads a preferences file the way a module reads another app's settings, through
+     * {@link XSharedPreferences}. The file is written by hand so that nothing here depends on the
+     * framework's own preference cache.
+     */
+    private static TestResult testPreferencesReadThroughFramework() {
+        String testName = "XSharedPreferences reads a preferences file";
+        File directory = new File(Environment.getDataDirectory(),
+                "data/dev.answer.alterapp/shared_prefs");
+        File file = new File(directory, "probe_prefs.xml");
+        try {
+            directory.mkdirs();
+            try (Writer out = new FileWriter(file)) {
+                out.write("<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n"
+                        + "<map>\n    <string name=\"greeting\">from-file</string>\n</map>\n");
+            }
+
+            XSharedPreferences preferences = new XSharedPreferences("dev.answer.alterapp", "probe_prefs");
+            preferences.reload();
+            String greeting = preferences.getString("greeting", "missing");
+            boolean sawKey = preferences.getAll().containsKey("greeting");
+            Log.i(TAG, "XSharedPreferences keys=" + sawKey + " greeting=" + greeting);
+
+            return new TestResult(testName, null,
+                    new TestResult.Stage("File parsed", "true", String.valueOf(sawKey)),
+                    new TestResult.Stage("Value read", "from-file", greeting));
+        } catch (Throwable e) {
+            Log.e(TAG, "XSharedPreferences read failed", e);
+            return TestResult.failure(testName, e);
+        } finally {
+            file.delete();
         }
     }
 }
