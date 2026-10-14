@@ -32,8 +32,10 @@ dependencies {
     compileOnly(project(":bridge"))
     compileOnly(project(":altercore"))
     
-    // libxposed API 101 support
-    compileOnly("io.github.libxposed:api:101.0.1")
+    // AlterCore is the runtime provider of the modern API classes for the modules it loads, so
+    // this is a real dependency rather than a compile-only one: modules declare it as
+    // compileOnly themselves and resolve io.github.libxposed.* against this framework's loader.
+    api("io.github.libxposed:api:102.0.0")
 }
 
 

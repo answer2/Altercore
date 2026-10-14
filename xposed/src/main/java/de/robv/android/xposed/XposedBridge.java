@@ -16,6 +16,8 @@ import java.util.Map;
 import java.util.Set;
 
 import de.robv.android.xposed.XC_MethodHook.MethodHookParam;
+import de.robv.android.xposed.callbacks.XC_InitPackageResources;
+import de.robv.android.xposed.callbacks.XC_LayoutInflated;
 
 import dev.answer.altercore.AlterCore;
 import dev.answer.altercore.callback.MethodHook;
@@ -31,7 +33,15 @@ public final class XposedBridge {
 	// Pine removed: Useless apis
 
 	// Pine added: New API for querying supported features
-	private static String[] sSupportedFeatures = new String[0];
+	// AlterCore changed: RESOURCE_REPLACEMENT dropped from the list — no XC_InitPackageResources /
+	// IXposedHookInitPackageResources exists here, and advertising it made modules take that path
+	// and crash on a missing class instead of reporting the feature as unavailable.
+	private static String[] sSupportedFeatures = new String[] {
+		"METHOD_HOOKING",
+		"CONSTRUCTOR_HOOKING",
+		"INIT_ZYGOTE",
+		"LOAD_PACKAGES"
+	};
 
 	/**
 	 * The system class loader which can be used to locate Android framework classes.
@@ -46,10 +56,21 @@ public final class XposedBridge {
 
 	/** @deprecated Use {@link #getXposedVersion()} instead. */
 	@Deprecated
-	public static int XPOSED_BRIDGE_VERSION = 90;
+	// AlterCore changed: 90 -> 93. Modules gate recent legacy features on this number, and the
+	// API-93 feature set (constructor hooking, deoptimization, priority ordering) is implemented
+	// here. Unrelated to the libxposed API level, which is reported separately through
+	// XposedInterface#getApiVersion().
+	public static int XPOSED_BRIDGE_VERSION = 93;
 
 	// built-in handlers
 	private static final Map<Member, HookState> sHookedMethodCallbacks = new HashMap<>();
+
+	// AlterCore added: resource hook registries. Their dispatch lives in
+	// dev.answer.altercore.xposed.ResourcesHooks, which intercepts the public Resources getters.
+	private static final CopyOnWriteSortedSet<XC_InitPackageResources> sInitPackageResourcesCallbacks =
+			new CopyOnWriteSortedSet<>();
+	private static final Map<String, CopyOnWriteSortedSet<XC_LayoutInflated>> sLayoutCallbacks =
+			new HashMap<>();
 
 	// Pine changed: Move sLoadedPackageCallbacks to PineXposed.
 	// /*package*/ static final CopyOnWriteSortedSet<XC_LoadPackage> sLoadedPackageCallbacks = new CopyOnWriteSortedSet<>();
@@ -304,6 +325,64 @@ public final class XposedBridge {
 	// Pine changed: removed handleHookedMethod(), it be implemented in Handler.class
 	// Pine changed: removed hookXxx(), it be implemented in PineXposed.class
 
+	// AlterCore added: resource hook registration.
+
+	/** @hide Callbacks waiting for a package's resources to be initialized. */
+	public static CopyOnWriteSortedSet<XC_InitPackageResources> initPackageResourcesCallbacks() {
+		return sInitPackageResourcesCallbacks;
+	}
+
+	/**
+	 * Register a module's resource callback. The callback is invoked the first time a resource of
+	 * that package is looked up, which is when AlterCore can tell which package is being served.
+	 */
+	public static void hookInitPackageResources(IXposedHookInitPackageResources callback) {
+		sInitPackageResourcesCallbacks.add(new IXposedHookInitPackageResources.Wrapper(callback));
+	}
+
+	/** @hide Layout callbacks for the {@code package:type/entry} key; empty package means "any". */
+	public static CopyOnWriteSortedSet<XC_LayoutInflated> layoutCallbacks(String key) {
+		synchronized (sLayoutCallbacks) {
+			return sLayoutCallbacks.get(key);
+		}
+	}
+
+	/** @hide Key used by {@link #layoutCallbacks}. */
+	public static String layoutKey(String packageName, String type, String entryName) {
+		return (packageName == null ? "" : packageName) + ":" + type + "/" + entryName;
+	}
+
+	public static XC_LayoutInflated.Unhook hookLayout(String packageName, String type,
+													 String entryName, XC_LayoutInflated callback) {
+		String key = layoutKey(packageName, type, entryName);
+		CopyOnWriteSortedSet<XC_LayoutInflated> callbacks;
+		synchronized (sLayoutCallbacks) {
+			callbacks = sLayoutCallbacks.get(key);
+			if (callbacks == null) {
+				callbacks = new CopyOnWriteSortedSet<>();
+				sLayoutCallbacks.put(key, callbacks);
+			}
+			callbacks.add(callback);
+		}
+		return callback.new Unhook(packageName, type, entryName);
+	}
+
+	public static void unhookLayout(String packageName, String type, String entryName,
+								   XC_LayoutInflated callback) {
+		String key = layoutKey(packageName, type, entryName);
+		CopyOnWriteSortedSet<XC_LayoutInflated> callbacks;
+		synchronized (sLayoutCallbacks) {
+			callbacks = sLayoutCallbacks.get(key);
+			if (callbacks == null) {
+				return;
+			}
+			callbacks.remove(callback);
+			if (callbacks.getSnapshot().length == 0) {
+				sLayoutCallbacks.remove(key);
+			}
+		}
+	}
+
 	/**
 	 * Basically the same as {@link Method#invoke}, but calls the original method
 	 * as it was before the interception by Xposed. Also, access permissions are not checked.
@@ -369,7 +448,7 @@ public final class XposedBridge {
 			int beforeIdx = 0;
 			do {
 				try {
-					((XC_MethodHook) callbacksSnapshot[beforeIdx]).beforeHookedMethod(param);
+					((XC_MethodHook) callbacksSnapshot[beforeIdx]).callBeforeHookedMethod(param);
 				} catch (Throwable t) {
 					XposedBridge.log(t);
 
@@ -389,7 +468,10 @@ public final class XposedBridge {
 			// Pine added: Flush MethodHookParam changes to CallFrame
 			callFrame.thisObject = param.thisObject;
 			callFrame.args = param.args;
-			if (param.returnEarly) {
+			// The engine sees one callback (this Handler) for the whole member, so the
+			// per-callback constructor-skip choice is filtered here rather than by
+			// allowsConstructorSkip() below.
+			if (param.returnEarly && maySkipOriginal(param, callbacksSnapshot, beforeIdx - 1)) {
 				if (param.hasThrowable())
 					callFrame.setThrowable(param.getThrowable());
 				else
@@ -399,6 +481,26 @@ public final class XposedBridge {
 			extData.callbacks = callbacksSnapshot;
 			extData.param = param;
 			extData.afterIdx = beforeIdx - 1;
+		}
+
+		/**
+		 * The hook site allows a skipped {@code <init>}; whether a particular callback may use it
+		 * is decided per callback by {@link XC_MethodHook#allowsConstructorSkip()}.
+		 */
+		@Override
+		public boolean allowsConstructorSkip() {
+			return true;
+		}
+
+		private static boolean maySkipOriginal(MethodHookParam param, Object[] callbacksSnapshot,
+											   int culpritIndex) {
+			if (!(param.method instanceof Constructor)) {
+				return true;
+			}
+			if (culpritIndex < 0 || culpritIndex >= callbacksSnapshot.length) {
+				return false;
+			}
+			return ((XC_MethodHook) callbacksSnapshot[culpritIndex]).allowsConstructorSkip();
 		}
 
 		@Override public void after(HookParams callFrame) {
@@ -424,7 +526,7 @@ public final class XposedBridge {
 				Throwable lastThrowable = param.getThrowable();
 
 				try {
-					((XC_MethodHook) callbacksSnapshot[afterIdx]).afterHookedMethod(param);
+					((XC_MethodHook) callbacksSnapshot[afterIdx]).callAfterHookedMethod(param);
 				} catch (Throwable t) {
 					XposedBridge.log(t);
 
@@ -504,4 +606,6 @@ public final class XposedBridge {
 			return elements;
 		}
 	}
+
+
 }

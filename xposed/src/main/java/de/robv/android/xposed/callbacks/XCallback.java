@@ -40,7 +40,7 @@ public abstract class XCallback implements Comparable<XCallback> {
 	 */
 	public static abstract class Param {
 		/** @hide */
-		public final Object[] callbacks;
+		public final XCallback[] callbacks;
 		private Bundle extra;
 
 		/** @deprecated This constructor can't be hidden for technical reasons. Nevertheless, don't use it! */
@@ -51,7 +51,10 @@ public abstract class XCallback implements Comparable<XCallback> {
 
 		/** @hide */
 		protected Param(CopyOnWriteSortedSet<? extends XCallback> callbacks) {
-			this.callbacks = callbacks.getSnapshot();
+			// Typed as XCallback[] because that is the descriptor prebuilt modules read with
+			// getfield; an Object[] here would fail them with NoSuchFieldError.
+			Object[] snapshot = callbacks.getSnapshot();
+			this.callbacks = java.util.Arrays.copyOf(snapshot, snapshot.length, XCallback[].class);
 		}
 
 		/**
