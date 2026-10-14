@@ -88,8 +88,8 @@ public final class AlterXposed {
     public static void loadOpenedModule(String modulePath, ClassLoader mcl, boolean startsSystemServer,
                                         ApplicationInfo moduleInfo, String librarySearchPath) {
         if (!checkModule(mcl)) return;
-        // The modern descriptor is read first: a module that only declares META-INF/xposed/*
-        // must not be reported as a broken legacy module afterwards.
+        // Read the modern descriptor first: a modern-only module must not be reported as broken
+        // because it has no assets/xposed_init.
         boolean modernEntry = ModernModuleLoader.load(mcl, modulePath, librarySearchPath,
                 moduleInfo, startsSystemServer);
         loadLegacyModule(modulePath, mcl, startsSystemServer, modernEntry);
@@ -154,8 +154,6 @@ public final class AlterXposed {
                     if (callback instanceof IXposedHookLoadPackage)
                         hookLoadPackage((IXposedHookLoadPackage) callback);
 
-                    // The interface exists so the declaring entry class can be defined at all:
-                    // AlterCore does not hook command-line tools.
                     if (callback instanceof IXposedHookCmdInit) {
                         Log.i(TAG, "    " + className + " declares initCmdApp; AlterCore does not"
                                 + " hook command-line tools, so it will never be called");
@@ -193,9 +191,9 @@ public final class AlterXposed {
         } catch (ClassNotFoundException ignored) {
         }
 
-        // The API classes must resolve to this framework's copies: a module shipping its own
-        // de.robv classes gets incompatible callback objects, and a module shipping its own
-        // io.github.libxposed classes would never be attached to this framework.
+        // The API classes must resolve to this framework's copies: a module bundling its own
+        // de.robv classes gets incompatible callback objects, and one bundling io.github.libxposed
+        // classes would never be attached to us.
         if (bundlesClass(mcl, fastPath, XposedBridge.class.getName())
                 || bundlesClass(mcl, fastPath, "io.github.libxposed.api.XposedModule")) {
             Log.e(TAG, "  Cannot load module:");

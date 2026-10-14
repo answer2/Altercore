@@ -51,8 +51,7 @@ public abstract class XCallback implements Comparable<XCallback> {
 
 		/** @hide */
 		protected Param(CopyOnWriteSortedSet<? extends XCallback> callbacks) {
-			// Typed as XCallback[] because that is the descriptor prebuilt modules read with
-			// getfield; an Object[] here would fail them with NoSuchFieldError.
+			// Modules read this field as XCallback[]; any other type gives them NoSuchFieldError.
 			Object[] snapshot = callbacks.getSnapshot();
 			this.callbacks = java.util.Arrays.copyOf(snapshot, snapshot.length, XCallback[].class);
 		}

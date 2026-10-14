@@ -13,11 +13,9 @@ Please note that this project is currently under active development – its API 
 
 + Support Android 8.0 - 17 (API level 26 - 37)
 + Support armeabi-v7a, arm64-v8a, x86, x86-64, riscv64
-+ Hook methods and constructors, with before / after / replace callbacks
-+ Load and run third-party Xposed modules: the legacy `de.robv.android.xposed` API and the modern
-  libxposed API (101 and 102: interceptor chain, hook ids, `replaceHook()`, `detach()`, hot reload)
-+ Replace app resources and observe layout inflation — in pure Java, with no native code and no
-  hidden API access
++ Hook methods and constructors with before, after and replace callbacks
++ Load third-party Xposed modules, both the legacy `de.robv.android.xposed` API and the libxposed API
++ Replace resources of hooked apps and get notified when their layouts are inflated
 
 ## Usage
 [![Download](https://img.shields.io/maven-central/v/io.github.answer2.altercore/core.svg)](https://repo1.maven.org/maven2/io/github/answer2/altercore/core/)
@@ -39,71 +37,53 @@ dependencies {
 ### Xposed Support
 [![Download](https://img.shields.io/maven-central/v/io.github.answer2.altercore/xposed.svg)](https://repo1.maven.org/maven2/io/github/answer2/altercore/xposed/)
 
-`AlterCore:xposed` turns your process into an Xposed framework: it provides both API surfaces to
-third-party modules and dispatches their hooks onto the AlterCore engine. Because modules declare
-the API as `compileOnly`, this artifact ships `io.github.libxposed:api` as a **runtime**
-dependency — you are the framework that has to provide those classes.
+`AlterCore:xposed` lets your process host Xposed modules: it provides the module facing APIs and
+dispatches module hooks onto the AlterCore engine. Modules compile against `io.github.libxposed:api`
+as `compileOnly`, so this artifact carries it as a runtime dependency, because your app is the
+framework that has to provide those classes.
+
+Load a module APK and report every package that starts:
 
 ```java
-// Load a module APK, then tell the framework about each package that starts.
 AlterXposed.loadModule(new File("/data/app/~~xxxx/com.example.module-xxxx/base.apk"),
-        /* librarySearchPath = */ null, /* startsSystemServer = */ false, moduleInfo);
-
+        librarySearchPath, false, moduleInfo);
 AlterXposed.onPackageLoad(packageName, processName, appInfo, isFirstApplication, classLoader);
-
-// Hot reload a loaded module (API 102). Pass a class loader over the updated APK to swap in new
-// code, or null to rebuild the module's entries from the loader it was first read with.
-ModernModuleLoader.ReloadResult result =
-        ModernModuleLoader.reload(modulePath, extras, /* replacementLoader = */ null);
 ```
 
-Both module flavours are loaded: legacy ones declared through `assets/xposed_init`, and modern ones
-declared through `META-INF/xposed/java_init.list`, `module.prop` and `scope.list`. A module that
-ships both entries is loaded through both paths, which is how dual-flavour modules work elsewhere;
-it is the module's job to avoid installing its hooks twice.
+A loaded module can be hot reloaded, which needs API 102. Pass a class loader over the updated APK
+to swap in new code, or null to rebuild the entries from the loader the module was read with:
 
-Reported versions: `XposedBridge.getXposedVersion()` returns `93`, `XposedInterface.getApiVersion()`
-returns `102`.
+```java
+ModernModuleLoader.reload(modulePath, extras, replacementLoader);
+```
 
-| Legacy API (`de.robv.android.xposed`) | Status |
-| --- | --- |
-| `XC_MethodHook`, `XC_MethodReplacement`, `XposedHelpers`, `hookAllMethods/Constructors` | ✅ |
-| Constructor hooking, incl. skipping the original `<init>` (per-callback opt-in) | ✅ |
-| `XSharedPreferences` | ⚠️ read-only; `edit()` and listeners throw |
-| `IXposedHookZygoteInit.initZygote` | ⚠️ called when the module is loaded into the process, not before a zygote fork |
-| `IXposedHookInitPackageResources`, `XC_LayoutInflated` | ✅ within the limits below |
-| `IXposedHookCmdInit.initCmdApp` | ❌ interface exists so modules still load; never invoked |
-| system_server / zygote injection, resource-hooking of theme attributes | ❌ |
+Modules are found through `assets/xposed_init` (legacy) and through
+`META-INF/xposed/java_init.list` with `module.prop` and `scope.list` (libxposed). A module that
+ships both is started through both paths, like on other frameworks, and has to avoid hooking twice
+by itself. `XposedBridge.getXposedVersion()` returns 93, `getApiVersion()` returns 102.
 
-| Modern API (libxposed 101 / 102) | Status |
-| --- | --- |
-| `XposedModule` lifecycle: `onModuleLoaded`, `onPackageLoaded`, `onPackageReady` | ✅ (the latter two share one phase and one class loader: there is no `AppComponentFactory` stage to separate them) |
-| `hook(Executable).intercept(Hooker)`, `Chain`, priorities, `ExceptionMode` | ✅ |
-| Hook ids (`setId`), `HookHandle.getId()`, `replaceHook()`, `detach()` | ✅ (102) |
-| Hot reload: `onHotReloading` handshake, saved-instance hand-off, `getOldHookHandles()` | ✅ (102) |
-| `deoptimize()`, `getInvoker()` with `ORIGIN` / `Chain(maxPriority)`, `invokeSpecial()` | ✅ methods; constructors can only be invoked through the chain, and `newInstanceSpecial()` is unsupported |
-| `hookClassInitializer()` | ❌ a `<clinit>` cannot be re-entered or intercepted here |
-| `getRemotePreferences()`, remote files, `onSystemServerStarting()` | ❌ there is no manager process to talk to; `getFrameworkProperties()` deliberately reports neither capability |
+Resource hooking works by hooking the public `Resources` getters and matching each requested id by
+its `package/type/entry` name, so no `Resources` instance of the host is replaced and no hidden
+member is called. A package is offered to modules the first time one of its resources is read.
 
-#### Resource hooking
+Works:
 
-Implemented without native code and without hidden API: AlterCore hooks the **public** `Resources`
-getters (`getString`, `getText`, `getDrawable`, `getXml`, `getLayout`, `openRawResource`, arrays,
-dimensions, …) and resolves each requested id into its `package/type/entry` key, so
-`handleInitPackageResources`, `setReplacement` and `XC_LayoutInflated` take effect app-wide without
-replacing any `Resources` instance. A package is offered to modules the first time one of its
-resources is looked up, so even that first read can already be replaced.
++ method and constructor hooking, `XposedHelpers`, `XC_MethodReplacement`, priorities, unhook
++ skipping the original constructor body, when the callback asks for it
++ `handleInitPackageResources`, `XResources.setReplacement` and `XC_LayoutInflated`
++ the libxposed chain API: `hook().intercept()`, `Chain`, exception modes, `detach()`, hook ids,
+  `replaceHook()`, hot reload, `deoptimize()`, `getInvoker()`
++ `XSharedPreferences`, read only
 
-Limits that follow from the design:
+Does not work:
 
-+ theme attributes and `TypedArray` styling cannot be replaced — framework internals read them
-  without going through a public getter;
-+ a replacement whose value is a resource id must belong to the same package; a foreign id is
-  rejected with a log line rather than misresolved, so register the object itself instead;
-+ `android.content.res.XResources` does not extend `Resources` — the constructors a subclass needs
-  are not visible to a library compiled against `android.jar`. Modules that only call
-  `setReplacement` / `hookLayout` are unaffected; one that passes `param.res` where a `Resources` is
-  expected gets a `ClassCastException`.
++ zygote and system_server injection. `initZygote` runs when the module is loaded instead, and
+  `onSystemServerStarting` is never called
++ theme attributes and `TypedArray` styling. `XResources` is also not a `Resources` subclass, since
+  such a subclass cannot be compiled against `android.jar`
++ a replacement given as a resource id of another package. Register the object itself instead
++ `hookClassInitializer`, remote preferences and remote files (there is no manager process),
+  `initCmdApp`, `XSharedPreferences.edit()`
 
 Groovy
 ```groovy

@@ -7,26 +7,13 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Resource replacement handle, as legacy modules know it: the object handed to
  * {@link de.robv.android.xposed.callbacks.XC_InitPackageResources.InitPackageResourcesParam#res}
- * and the receiver of {@code setReplacement(...)} calls.
+ * and the receiver of {@code setReplacement(...)} and {@code hookLayout(...)} calls.
  *
- * <p>AlterCore applies replacements by hooking the <em>public</em> {@code Resources} getters
- * globally and resolving each requested id into its {@code package/type/entry} key, so no
- * {@code Resources} instance of the host app is ever replaced and no hidden framework member is
- * needed. Two consequences are worth stating plainly:</p>
- * <ul>
- *   <li>this class does not extend {@code Resources} — the constructors a subclass would need are
- *       not visible to a library compiled against {@code android.jar}. Modules that only call
- *       {@code setReplacement}/{@code getReplacement} (the overwhelming majority) are unaffected;
- *       a module that passes {@code param.res} where a {@code Resources} is expected fails with a
- *       {@code ClassCastException}.</li>
- *   <li>lookups that never go through a public {@code Resources} getter — theme attributes and
- *       {@code TypedArray} styling in particular — cannot be replaced.</li>
- * </ul>
- *
- * <p>A replacement value is either the object to return ({@code String}, {@code CharSequence},
- * {@code Drawable}, {@code InputStream}, {@code int[]}, …) or an {@code Integer} resource id, in
- * which case the id is substituted and the original getter resolves it. A foreign id (one that does
- * not belong to the package being served) is reported and ignored rather than misresolved.</p>
+ * <p>Replacements are applied by dev.answer.altercore.xposed.ResourcesHooks, which hooks the public
+ * {@code Resources} getters, so no instance is replaced and no hidden member is needed. Two limits
+ * follow: this class does not extend {@code Resources} (the constructors a subclass needs are
+ * absent from {@code android.jar}), and a replacement given as a resource id must belong to the
+ * package being served, since we cannot resolve ids from another package's table.</p>
  */
 public class XResources {
 

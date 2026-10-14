@@ -1,7 +1,6 @@
 /*
- * Shape and documentation follow LSPosed (GPL-3.0), so modules built against that API find the
- * same members here. Adapted by AlterCore: the callback registry is keyed by
- * package/type/entry instead of a resource directory, and the ordering comes from XCallback.
+ * Follows the LSPosed (GPL-3.0) shape of this class, with the callback registry keyed by
+ * package/type/entry instead of a resource directory.
  */
 package de.robv.android.xposed.callbacks;
 
@@ -54,10 +53,8 @@ public abstract class XC_LayoutInflated extends XCallback {
         public XResources.ResourceNames resNames;
 
         /**
-         * Directory from which the layout was actually loaded (e.g. "layout-sw600dp").
-         *
-         * <p>AlterCore resolves layouts by their {@code package/type/entry} key and does not know
-         * which configuration variant the platform picked, so this field stays {@code null}.</p>
+         * Directory from which the layout was actually loaded (e.g. "layout-sw600dp"). Always
+         * {@code null} here: we match layouts by name and never see which variant was picked.
          */
         public String variant;
 

@@ -1,16 +1,15 @@
 /*
- * Shape and documentation follow LSPosed (GPL-3.0). AlterCore never invokes initCmdApp; the
- * interface is present so that modules declaring it can still be defined and loaded.
+ * Follows the LSPosed (GPL-3.0) shape of this interface. It is never invoked here; declaring it is
+ * enough for a module's entry class to be defined.
  */
 package de.robv.android.xposed;
+
 
 /**
  * Hook the initialization of Java-based command-line tools (like pm).
  *
  * @hide Xposed no longer hooks command-line tools, therefore this interface shouldn't be
- * implemented anymore. It is kept here so that existing modules declaring it can still be loaded:
- * the interface must be resolvable when their entry class is defined. AlterCore never calls
- * {@link #initCmdApp}.
+ * implemented anymore.
  */
 public interface IXposedHookCmdInit extends IXposedMod {
     /**

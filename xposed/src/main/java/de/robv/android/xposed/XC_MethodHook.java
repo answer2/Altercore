@@ -48,12 +48,8 @@ public abstract class XC_MethodHook extends XCallback {
 	protected void beforeHookedMethod(MethodHookParam param) throws Throwable {}
 
 	/**
-	 * Dispatch entry point for {@link #beforeHookedMethod}. The framework calls this, so a callback
-	 * that overrides only this method is still honoured — modules built against recent frameworks
-	 * do exactly that.
-	 *
-	 * @param param Information about the method call.
-	 * @throws Throwable Everything the callback throws is caught and logged.
+	 * Dispatch entry point for {@link #beforeHookedMethod}. The framework calls this, so callbacks
+	 * that only override it are still invoked.
 	 */
 	public void callBeforeHookedMethod(MethodHookParam param) throws Throwable {
 		beforeHookedMethod(param);
@@ -74,24 +70,17 @@ public abstract class XC_MethodHook extends XCallback {
 
 	/**
 	 * Dispatch entry point for {@link #afterHookedMethod}, called in reversed priority order.
-	 *
-	 * @param param Information about the method call.
-	 * @throws Throwable Everything the callback throws is caught and logged.
 	 */
 	public void callAfterHookedMethod(MethodHookParam param) throws Throwable {
 		afterHookedMethod(param);
 	}
 
 	/**
-	 * Whether this callback is allowed to skip the original body of a constructor by calling
-	 * {@link MethodHookParam#setResult} or {@link MethodHookParam#setThrowable} from
-	 * {@link #beforeHookedMethod}.
+	 * Whether this callback may skip the original constructor body with {@code setResult} or
+	 * {@code setThrowable} in {@link #beforeHookedMethod}.
 	 *
-	 * <p>Disabled by default: skipping {@code <init>} leaves the freshly allocated object
-	 * uninitialized, which can crash or misbehave later on, so a plain {@code setResult} on a
-	 * constructor target is ignored as it always has been. Callbacks that really mean it — such as
-	 * the interceptor-chain dispatcher, where "did not proceed" has to mean "the original did not
-	 * run" — override this to {@code true}.</p>
+	 * <p>Off by default: skipping {@code <init>} leaves the new object uninitialized, which can
+	 * crash its user, so a skipped constructor is ignored unless the callback asks for it.
 	 */
 	public boolean allowsConstructorSkip() {
 		return false;
@@ -116,12 +105,11 @@ public abstract class XC_MethodHook extends XCallback {
 		/** Arguments to the method call. */
 		public Object[] args;
 
-		// Public as upstream declares them: modules compiled against the official API read and
-		// write these fields directly, and field access is checked at runtime, so package-private
-		// here would surface as IllegalAccessError for those modules.
+		// Public like upstream declares them; modules compiled against the official API touch these
+		// fields directly and field access is checked at runtime.
 		public Object result = null;
 		public Throwable throwable = null;
-		/* package */ public boolean returnEarly = false;
+		public boolean returnEarly = false;
 
 		/** Returns the result of the method call. */
 		public Object getResult() {

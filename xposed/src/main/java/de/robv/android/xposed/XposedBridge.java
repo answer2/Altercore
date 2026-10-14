@@ -33,9 +33,8 @@ public final class XposedBridge {
 	// Pine removed: Useless apis
 
 	// Pine added: New API for querying supported features
-	// AlterCore changed: RESOURCE_REPLACEMENT dropped from the list — no XC_InitPackageResources /
-	// IXposedHookInitPackageResources exists here, and advertising it made modules take that path
-	// and crash on a missing class instead of reporting the feature as unavailable.
+	// RESOURCE_REPLACEMENT is left out on purpose: our resource hooking covers neither theme
+	// attributes nor a Resources-typed XResources.
 	private static String[] sSupportedFeatures = new String[] {
 		"METHOD_HOOKING",
 		"CONSTRUCTOR_HOOKING",
@@ -56,17 +55,14 @@ public final class XposedBridge {
 
 	/** @deprecated Use {@link #getXposedVersion()} instead. */
 	@Deprecated
-	// AlterCore changed: 90 -> 93. Modules gate recent legacy features on this number, and the
-	// API-93 feature set (constructor hooking, deoptimization, priority ordering) is implemented
-	// here. Unrelated to the libxposed API level, which is reported separately through
+	// This is the legacy API level, unrelated to the libxposed one reported by
 	// XposedInterface#getApiVersion().
 	public static int XPOSED_BRIDGE_VERSION = 93;
 
 	// built-in handlers
 	private static final Map<Member, HookState> sHookedMethodCallbacks = new HashMap<>();
 
-	// AlterCore added: resource hook registries. Their dispatch lives in
-	// dev.answer.altercore.xposed.ResourcesHooks, which intercepts the public Resources getters.
+	// Resource hook registries, dispatched by dev.answer.altercore.xposed.ResourcesHooks.
 	private static final CopyOnWriteSortedSet<XC_InitPackageResources> sInitPackageResourcesCallbacks =
 			new CopyOnWriteSortedSet<>();
 	private static final Map<String, CopyOnWriteSortedSet<XC_LayoutInflated>> sLayoutCallbacks =
@@ -333,8 +329,8 @@ public final class XposedBridge {
 	}
 
 	/**
-	 * Register a module's resource callback. The callback is invoked the first time a resource of
-	 * that package is looked up, which is when AlterCore can tell which package is being served.
+	 * Register a module's resource callback. It runs the first time a resource of that package is
+	 * looked up, which is when we can tell which package is being served.
 	 */
 	public static void hookInitPackageResources(IXposedHookInitPackageResources callback) {
 		sInitPackageResourcesCallbacks.add(new IXposedHookInitPackageResources.Wrapper(callback));
@@ -468,9 +464,8 @@ public final class XposedBridge {
 			// Pine added: Flush MethodHookParam changes to CallFrame
 			callFrame.thisObject = param.thisObject;
 			callFrame.args = param.args;
-			// The engine sees one callback (this Handler) for the whole member, so the
-			// per-callback constructor-skip choice is filtered here rather than by
-			// allowsConstructorSkip() below.
+			// The engine sees one callback per member (this Handler), so the per-callback
+			// constructor-skip choice is filtered here instead of in allowsConstructorSkip().
 			if (param.returnEarly && maySkipOriginal(param, callbacksSnapshot, beforeIdx - 1)) {
 				if (param.hasThrowable())
 					callFrame.setThrowable(param.getThrowable());
@@ -483,10 +478,7 @@ public final class XposedBridge {
 			extData.afterIdx = beforeIdx - 1;
 		}
 
-		/**
-		 * The hook site allows a skipped {@code <init>}; whether a particular callback may use it
-		 * is decided per callback by {@link XC_MethodHook#allowsConstructorSkip()}.
-		 */
+		/** Open for every callback; {@link #maySkipOriginal} filters per callback. */
 		@Override
 		public boolean allowsConstructorSkip() {
 			return true;
@@ -606,6 +598,4 @@ public final class XposedBridge {
 			return elements;
 		}
 	}
-
-
 }

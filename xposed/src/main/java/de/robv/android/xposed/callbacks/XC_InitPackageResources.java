@@ -1,7 +1,6 @@
 /*
- * Shape and documentation follow LSPosed (GPL-3.0), so modules built against that API find the
- * same members here. AlterCore adds no resource-hooking of its own to this class; see
- * dev.answer.altercore.xposed.ResourcesHooks for where replacements are applied.
+ * Follows the LSPosed (GPL-3.0) shape of this class; replacements are applied by
+ * dev.answer.altercore.xposed.ResourcesHooks.
  */
 package de.robv.android.xposed.callbacks;
 
@@ -10,12 +9,6 @@ import de.robv.android.xposed.IXposedHookInitPackageResources;
 /**
  * This class is only used for internal purposes, except for the {@link InitPackageResourcesParam}
  * subclass.
- *
- * <p>AlterCore does not implement resource replacement, so the callback is registered and never
- * invoked, and the parameter carries no {@code res} reference: upstream types that field as
- * {@code android.content.res.XResources}, a class the framework owns and that cannot be shipped
- * with a hook library. Declaring the interface is still enough for a module's entry class to be
- * defined, which is what makes the rest of that module work.</p>
  */
 public abstract class XC_InitPackageResources extends XCallback
         implements IXposedHookInitPackageResources {
@@ -57,11 +50,8 @@ public abstract class XC_InitPackageResources extends XCallback
         public String packageName;
 
         /**
-         * Reference to the resources on which resource replacements can be registered.
-         *
-         * <p>AlterCore's handle is not a {@code Resources} subclass (see
-         * {@link android.content.res.XResources}); calls to {@code setReplacement} and
-         * {@code hookLayout} work as they do upstream.</p>
+         * Reference to the resources that can be used for calls to
+         * {@code XResources.setReplacement(String, String, String, Object)}.
          */
         public android.content.res.XResources res;
     }

@@ -28,18 +28,12 @@ import io.github.libxposed.api.error.HookFailedError;
 /**
  * Interceptor-chain dispatcher backing the modern libxposed {@code hook()} API.
  *
- * <p>All hookers registered for one {@link Executable} live in a single {@link ChainState} which
- * is driven by exactly one internal {@link XC_MethodHook} carrier, installed through
- * {@link XposedBridge#hookMethod}. That keeps a single AlterCore hook per member even when a
- * process loads legacy modules and modern modules side by side, and nests the whole modern chain
- * into the lowest legacy priority slot, so legacy callbacks still get to run first.</p>
- *
- * <p>Constructors are hooked with the same semantics as methods: the chain calls the original
- * {@code <init>} body itself (through the target's backup), so {@code proceed()} means "the object
- * is initialized here" and a hooker that does not call {@code proceed()} really leaves the newly
- * allocated object uninitialized. That requires the engine to honor a skipped frame for
- * {@code <init>} targets, which is why {@link Carrier} opts into
- * {@link dev.answer.altercore.callback.MethodHook#allowsConstructorSkip()}.</p>
+ * <p>All hookers for one {@link Executable} live in a single {@link ChainState} driven by one
+ * internal {@link XC_MethodHook} carrier installed through {@link XposedBridge#hookMethod}, so a
+ * member never gets two engine hooks when legacy and modern modules coexist; the whole chain sits
+ * in the lowest legacy priority slot and therefore runs after legacy callbacks. Constructors behave
+ * like methods: the chain calls {@code <init>} through the target's backup, so a hooker that does
+ * not proceed leaves the object uninitialized (see {@link Carrier#allowsConstructorSkip()}).
  */
 public final class HookRegistry {
     private static final String TAG = "AlterCore/Chain";

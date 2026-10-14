@@ -19,24 +19,17 @@ import de.robv.android.xposed.callbacks.XC_LayoutInflated;
 import de.robv.android.xposed.callbacks.XCallback;
 
 /**
- * Resource hooking, implemented entirely on public framework API.
+ * Resource hooking for legacy modules, without native code or hidden API.
  *
- * <p>Upstream Xposed replaces the host app's {@code Resources} objects with {@code XResources}
- * clones, which needs the hidden {@code Resources} constructors, {@code ResourcesManager} surgery
- * per Android version and a native helper for value patching. AlterCore is pure Java, so it
- * instead hooks the public {@code Resources} getters (verified on device to intercept lookups
- * app-wide without touching any instance) and decodes each requested id into its
+ * <p>Upstream replaces the host's {@code Resources} objects with {@code XResources} clones, which
+ * needs hidden constructors, per-version {@code ResourcesManager} surgery and a native helper. We
+ * instead hook the public {@code Resources} getters and decode each id into its
  * {@code package/type/entry} key with the public {@code getResource*Name} methods.</p>
  *
- * <p>What that does and does not cover:</p>
- * <ul>
- *   <li>covers: strings, char sequences, drawables, colors, raw/XML streams, layouts, arrays,
- *       dimensions, booleans and integers fetched through {@code Resources}, plus layout inflation
- *       callbacks via {@code LayoutInflater};</li>
- *   <li>does not cover: theme attributes and {@code TypedArray} styling (framework internals read
- *       those without a public getter), and replacements whose value is a resource id belonging to
- *       another package — that id is rejected rather than misresolved.</li>
- * </ul>
+ * <p>Covered: strings, char sequences, drawables, colors, raw and XML streams, layouts, arrays,
+ * dimensions, integers and booleans fetched through {@code Resources}, plus layout inflation
+ * callbacks. Not covered: theme attributes and {@code TypedArray} styling, which the framework
+ * reads without a public getter, and resource ids belonging to another package.</p>
  */
 public final class ResourcesHooks {
     private static final String TAG = "AlterCore/Res";
@@ -164,10 +157,9 @@ public final class ResourcesHooks {
     }
 
     /**
-     * Reports inflated layouts back to modules. Layout *replacement* needs nothing here:
-     * {@code LayoutInflater.inflate(int, …)} resolves the layout through {@code Resources.getLayout},
-     * which the {@link GetterHook} already substitutes. The callback therefore keeps describing the
-     * layout the caller asked for, even when a replacement made a different one get inflated.
+     * Reports inflated layouts to modules. Layout replacement happens earlier, in the
+     * {@code Resources.getLayout} hook, so the callback keeps describing the layout the caller
+     * asked for even when a different one ends up inflated.
      */
     private static final class LayoutHook extends XC_MethodHook {
         @Override

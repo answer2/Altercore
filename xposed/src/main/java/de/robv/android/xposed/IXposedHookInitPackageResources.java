@@ -1,6 +1,5 @@
 /*
- * Shape and documentation follow LSPosed (GPL-3.0). AlterCore implements resource replacement for
- * the public Resources getters only, and its XResources is not a Resources subclass.
+ * Follows the LSPosed (GPL-3.0) shape of this interface.
  */
 package de.robv.android.xposed;
 
@@ -13,10 +12,6 @@ import de.robv.android.xposed.callbacks.XC_InitPackageResources.InitPackageResou
  *
  * <p>This interface should be implemented by the module's main class. Xposed will take care of
  * registering it as a callback automatically.
- *
- * <p>AlterCore implements only Java method hooking: the callback is registered so that modules
- * declaring this interface still load, but {@link #handleInitPackageResources} is never called and
- * no resource replacement is possible.
  */
 public interface IXposedHookInitPackageResources extends IXposedMod {
     /**
