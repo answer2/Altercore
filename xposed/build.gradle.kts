@@ -1,4 +1,4 @@
-import com.vanniktech.maven.publish.AndroidMultiVariantLibrary
+import com.vanniktech.maven.publish.AndroidSingleVariantLibrary
 import com.vanniktech.maven.publish.JavadocJar
 import com.vanniktech.maven.publish.SourcesJar
 
@@ -17,6 +17,7 @@ android {
 
     defaultConfig {
         minSdk = 26
+        consumerProguardFiles("consumer-rules.pro")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -28,10 +29,10 @@ android {
 }
 
 dependencies {
+    // Framework classes the module loader compiles against but the Android runtime provides.
     compileOnly(project(":stubs"))
-    compileOnly(project(":bridge"))
-    compileOnly(project(":altercore"))
-    
+    api(project(":altercore"))
+
     // AlterCore is the runtime provider of the modern API classes for the modules it loads, so
     // this is a real dependency rather than a compile-only one: modules declare it as
     // compileOnly themselves and resolve io.github.libxposed.* against this framework's loader.
@@ -40,26 +41,27 @@ dependencies {
 
 
 mavenPublishing {
-    publishToMavenCentral(automaticRelease = false)   // false 表示手动确认发布
+    publishToMavenCentral(automaticRelease = false)   // false: release it by hand on the portal
 
-    // 签名所有产物（需要 GPG）
+    // sign everything
     signAllPublications()
 
     configure(
-        AndroidMultiVariantLibrary(
-            javadocJar = JavadocJar.Empty(),   // 不需要 Javadoc（或根据需要改为 Dokka）
-            sourcesJar = SourcesJar.Sources()  // 打包源码
+        AndroidSingleVariantLibrary(
+            variant = "release",
+            javadocJar = JavadocJar.Empty(),   // Central only needs the artifact to be there
+            sourcesJar = SourcesJar.Sources()
         )
     )
 
-    // 坐标
+    // coordinates
     coordinates(
         groupId = "io.github.answer2.altercore",
         artifactId = "xposed",
-        version = "0.0.2"
+        version = "0.0.3"
     )
 
-    // POM 信息（必须填写完整）
+    // pom information Central checks
     pom {
         name.set("AlterCore")
         description.set("A pure-Java Android ART hook Xposed style library")

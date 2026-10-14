@@ -1,4 +1,4 @@
-import com.vanniktech.maven.publish.AndroidMultiVariantLibrary
+import com.vanniktech.maven.publish.AndroidSingleVariantLibrary
 import com.vanniktech.maven.publish.JavadocJar
 import com.vanniktech.maven.publish.SourcesJar
 
@@ -18,6 +18,7 @@ android {
 
     defaultConfig {
         minSdk = 26
+        consumerProguardFiles("consumer-rules.pro")
     }
 
     buildTypes {
@@ -48,20 +49,21 @@ mavenPublishing {
     signAllPublications()
 
     configure(
-        AndroidMultiVariantLibrary(
-            javadocJar = JavadocJar.Empty(),   // 不需要 Javadoc（或根据需要改为 Dokka）
-            sourcesJar = SourcesJar.Sources()  // 打包源码
+        AndroidSingleVariantLibrary(
+            variant = "release",
+            javadocJar = JavadocJar.Empty(),   // Central only needs the artifact to be there
+            sourcesJar = SourcesJar.Sources()
         )
     )
 
-    // 坐标
+    // coordinates
     coordinates(
         groupId = "io.github.answer2.altercore",
         artifactId = "core",
-        version = "1.1.3"
+        version = "1.1.4"
     )
 
-    // POM 信息（必须填写完整）
+    // pom information Central checks
     pom {
         name.set("AlterCore")
         description.set("A pure-Java Android ART hook library")
