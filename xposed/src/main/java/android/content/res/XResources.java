@@ -10,10 +10,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * and the receiver of {@code setReplacement(...)} and {@code hookLayout(...)} calls.
  *
  * <p>Replacements are applied by dev.answer.altercore.xposed.ResourcesHooks, which hooks the public
- * {@code Resources} getters, so no instance is replaced and no hidden member is needed. Two limits
- * follow: this class does not extend {@code Resources} (the constructors a subclass needs are
- * absent from {@code android.jar}), and a replacement given as a resource id must belong to the
- * package being served, since we cannot resolve ids from another package's table.</p>
+ * {@code Resources} and {@code TypedArray} getters, so no instance is replaced and no hidden member
+ * is needed. One limit follows from that: this class does not extend {@code Resources}, because the
+ * constructors a subclass needs are absent from {@code android.jar}.</p>
  */
 public class XResources {
 
@@ -54,6 +53,11 @@ public class XResources {
 
     public Object getReplacement(String packageName, String type, String entryName) {
         return REPLACEMENTS.get(key(packageName, type, entryName));
+    }
+
+    /** @hide Fast path for the hooks: nothing to substitute while no replacement is registered. */
+    public static boolean isEmpty() {
+        return REPLACEMENTS.isEmpty();
     }
 
     /** @hide Lookup by the decoded identity of a resource id; {@code null} when nothing is registered. */

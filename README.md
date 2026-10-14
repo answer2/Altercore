@@ -62,15 +62,19 @@ Modules are found through `assets/xposed_init` (legacy) and through
 ships both is started through both paths, like on other frameworks, and has to avoid hooking twice
 by itself. `XposedBridge.getXposedVersion()` returns 93, `getApiVersion()` returns 102.
 
-Resource hooking works by hooking the public `Resources` getters and matching each requested id by
-its `package/type/entry` name, so no `Resources` instance of the host is replaced and no hidden
-member is called. A package is offered to modules the first time one of its resources is read.
+Resource hooking works by hooking the public `Resources` and `TypedArray` getters and matching each
+requested id by its `package/type/entry` name, so no `Resources` instance of the host is replaced and
+no hidden member is called. A package is offered to modules the first time one of its resources is
+read.
 
 Works:
 
 + method and constructor hooking, `XposedHelpers`, `XC_MethodReplacement`, priorities, unhook
 + skipping the original constructor body, when the callback asks for it
-+ `handleInitPackageResources`, `XResources.setReplacement` and `XC_LayoutInflated`
++ `handleInitPackageResources`, `XResources.setReplacement` and `XC_LayoutInflated`, including
+  values that reach a view through a style or theme attribute
++ a replacement given as a resource id, as long as the hooked app can resolve it (`android.R.*`
+  included)
 + the libxposed chain API: `hook().intercept()`, `Chain`, exception modes, `detach()`, hook ids,
   `replaceHook()`, hot reload, `deoptimize()`, `getInvoker()`
 + `XSharedPreferences`, read only
@@ -79,9 +83,10 @@ Does not work:
 
 + zygote and system_server injection. `initZygote` runs when the module is loaded instead, and
   `onSystemServerStarting` is never called
-+ theme attributes and `TypedArray` styling. `XResources` is also not a `Resources` subclass, since
-  such a subclass cannot be compiled against `android.jar`
-+ a replacement given as a resource id of another package. Register the object itself instead
++ a style value written as a literal instead of a resource reference, and whole-theme replacement
++ `XResources` is not a `Resources` subclass, so a module that treats `param.res` as one fails.
+  Such a subclass cannot be compiled against `android.jar`
++ resources of a package the hooked app cannot resolve. Register the object itself instead
 + `hookClassInitializer`, remote preferences and remote files (there is no manager process),
   `initCmdApp`, `XSharedPreferences.edit()`
 

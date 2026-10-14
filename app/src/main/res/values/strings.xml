@@ -5,4 +5,6 @@
     <string name="probe_replacement">replaced</string>
     <string name="probe_layout_text">from-default-layout</string>
     <string name="probe_alt_text">from-alt-layout</string>
+    <string name="probe_style_only">style-default</string>
+    <string name="probe_cross">cross-default</string>
 </resources>

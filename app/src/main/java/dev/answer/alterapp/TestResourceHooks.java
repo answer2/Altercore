@@ -44,6 +44,15 @@ public class TestResourceHooks {
             String inflated = firstText(inflater.inflate(R.layout.probe_layout, null, false));
             results.add(one("Layout replaced by resource id", "from-alt-layout", inflated));
 
+            // Read through android:text of a styled layout, so only the TypedArray path can reach it.
+            String styled = firstText(inflater.inflate(R.layout.probe_styled, null, false));
+            results.add(one("Style value replaced through TypedArray", "replaced-in-style", styled));
+
+            int probeCross = context.getResources().getIdentifier("probe_cross", "string", PACKAGE);
+            String cross = context.getString(probeCross);
+            results.add(one("Replacement given as a framework resource id",
+                    context.getString(android.R.string.ok), cross));
+
             String layoutState = LegacyCompatModule.resourceState();
             results.add(new TestResult("handleInitPackageResources / XC_LayoutInflated delivered",
                     null,
@@ -55,12 +64,17 @@ public class TestResourceHooks {
             XResources.clearReplacements(PACKAGE);
             String restored = context.getString(probeString);
             String inflatedAfterClear = firstText(inflater.inflate(R.layout.probe_layout, null, false));
+            String styledAfterClear = firstText(inflater.inflate(R.layout.probe_styled, null, false));
             Log.i(TAG, "observed after clear: string=" + restored + " layout=" + inflatedAfterClear
+                    + " style=" + styledAfterClear + " cross=" + context.getString(probeCross)
                     + " " + LegacyCompatModule.resourceState());
             results.add(new TestResult("Clearing replacements restores the originals",
                     null,
-                    new TestResult.Stage("String after clear", "platform", restored),
-                    new TestResult.Stage("Layout after clear", "from-default-layout", inflatedAfterClear)));
+                    new TestResult.Stage("String and style after clear", "platform|style-default",
+                            restored + "|" + styledAfterClear),
+                    new TestResult.Stage("Layout and framework id after clear",
+                            "from-default-layout|cross-default",
+                            inflatedAfterClear + "|" + context.getString(probeCross))));
 
             // Clearing must not reopen the package: the callback runs once, ever. Inflation
             // callbacks keep firing for every inflation, so only the offer count is checked here.
@@ -71,6 +85,7 @@ public class TestResourceHooks {
             // so a re-run of the suite needs the module to register them itself.
             LegacyCompatModule.registerReplacements();
         } catch (Throwable t) {
+            Log.e(TAG, "Resource hook tests failed", t);
             results.add(TestResult.failure("Resource hook tests", t));
         }
         return results;

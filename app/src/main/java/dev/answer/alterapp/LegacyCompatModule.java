@@ -107,6 +107,10 @@ public class LegacyCompatModule implements IXposedHookLoadPackage, IXposedHookCm
             return;
         }
         resources.setReplacement(PACKAGE, "string", "probe_string", "replaced-by-module");
+        // Read only through a style value, so it proves the TypedArray path.
+        resources.setReplacement(PACKAGE, "string", "probe_style_only", "replaced-in-style");
+        // A framework id: the target resolves it, so substituting the id is enough.
+        resources.setReplacement(PACKAGE, "string", "probe_cross", android.R.string.ok);
         resources.setReplacement(PACKAGE, "layout", "probe_layout", R.layout.probe_layout_alt);
         if (layoutHookRegistered) {
             return;
