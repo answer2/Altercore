@@ -188,20 +188,28 @@ public class MainActivity extends AppCompatActivity {
             List<TestResult> hookResults = TestHook.runTests();
             List<TestResult> invokeOriginalResults = TestInvokeOriginal.runTests();
             List<TestResult> xposedResults = TestXposed.runTests();
+            List<TestResult> modernResults = TestModernXposed.runTests(getApplicationContext());
+            List<TestResult> resourceResults = TestResourceHooks.runTests(getApplicationContext());
 
-            runOnUiThread(() -> renderResults(hookResults, invokeOriginalResults, xposedResults));
+            runOnUiThread(() -> renderResults(hookResults, invokeOriginalResults,
+                    xposedResults, modernResults, resourceResults));
         }, "AlterCoreTestRunner").start();
     }
 
     private void renderResults(List<TestResult> hookResults,
                                List<TestResult> invokeOriginalResults,
-                               List<TestResult> xposedResults) {
-        int total = hookResults.size() + invokeOriginalResults.size() + xposedResults.size();
+                               List<TestResult> xposedResults,
+                               List<TestResult> modernResults,
+                               List<TestResult> resourceResults) {
+        int total = hookResults.size() + invokeOriginalResults.size() + xposedResults.size()
+                + modernResults.size() + resourceResults.size();
         int passed = 0;
 
         passed += renderSection("Basic Hooking (AlterCore)", hookResults);
         passed += renderSection("Call-Original Capability (AlterCore)", invokeOriginalResults);
         passed += renderSection("Real Xposed API (XposedBridge)", xposedResults);
+        passed += renderSection("Modern libxposed API 101 (chain)", modernResults);
+        passed += renderSection("Resource hooking (XResources)", resourceResults);
 
         boolean allPassed = passed == total;
         int summaryColor = allPassed ? COLOR_PASS : COLOR_FAIL;
